@@ -69,8 +69,10 @@ else
         applied=$((applied+1))
       else
         warn "upstream patch failed on $MM — falling back to the legacy minimal backport"
+        warn "LEGACY FALLBACK: the minimal backport only kills the session.upload_progress producer"
+        warn "it does NOT fix the engine memory-safety bugs — it is NOT equivalent to the complete PHP2Shell patch"
         try_patch "$HERE/legacy/php2shell-minimal-backport-7.4-8.1.patch" \
-          "PHP2Shell minimal backport (producer kill only)" && applied=$((applied+1))
+          "PHP2Shell minimal backport (producer kill only — NOT a complete fix)" && applied=$((applied+1))
       fi
       ;;
     7.4|8.0|8.1)
@@ -103,9 +105,21 @@ fi
 # ---- 4. rebuild -------------------------------------------------------------
 if [ "$REBUILD" = 1 ] && [ "$PSP_DRY_RUN" != 1 ]; then
   step "Rebuilding PHP (this takes a while)"
-  ( cd "$SRC" && ./buildconf --force && ./configure --disable-all --enable-cli --enable-fpm \
-      --with-config-file-path=/etc/php && make -j"$(nproc 2>/dev/null || echo 2)" && make install ) \
-    || die "rebuild failed — inspect the tree at $SRC"
+  # Prefer the tree's previous configure options (config.nice) over a minimal
+  # --disable-all build, so the rebuild preserves the target installation's
+  # existing build configuration.  Only fall back to --disable-all if there is
+  # no record of the original options.
+  if [ -f "$SRC/config.nice" ]; then
+    info "preserving existing configure options from config.nice"
+    ( cd "$SRC" && ./buildconf --force && ./config.nice && make -j"$(nproc 2>/dev/null || echo 2)" && make install ) \
+      || die "rebuild failed — inspect the tree at $SRC"
+  else
+    warn "no config.nice found — rebuild uses a minimal configuration (--disable-all --enable-cli --enable-fpm)"
+    warn "this does NOT preserve the target installation's build options — review before using on production"
+    ( cd "$SRC" && ./buildconf --force && ./configure --disable-all --enable-cli --enable-fpm \
+        --with-config-file-path=/etc/php && make -j"$(nproc 2>/dev/null || echo 2)" && make install ) \
+      || die "rebuild failed — inspect the tree at $SRC"
+  fi
   ok "rebuilt and installed — now RESTART every PHP worker (systemctl restart php*-fpm / reload apache)"
 fi
 

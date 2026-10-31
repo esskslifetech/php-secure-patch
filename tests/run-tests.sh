@@ -202,11 +202,12 @@ ini_oom="$(ini_hardening_content 8.1.29)"
 mem_active="$(printf '%s\n' "$ini_oom" | grep -E '^memory_limit' || true)"
 assert_eq "opt-in writes exactly memory_limit = -1" "memory_limit = -1" "$mem_active"
 assert_contains "opt-in demands an external cap" "systemd MemoryMax" "$ini_oom"
-# Patched runtime: finite bound, never -1
+# Patched runtime: no active memory_limit directive is forced (site's existing setting stands)
 PSP_OOM_MITIGATION=0
 ini_fixed="$(ini_hardening_content 8.3.36)"
 mem_active="$(printf '%s\n' "$ini_fixed" | grep -E '^memory_limit' || true)"
-assert_eq "patched runtime keeps a finite bound" "memory_limit = 256M" "$mem_active"
+assert_eq "no active memory_limit directive forced on a patched runtime" "" "$mem_active"
+assert_contains "patched runtime is told to keep its own setting" "NOT overridden" "$ini_fixed"
 
 step "15. install.sh help"
 "$PSP_ROOT/install.sh" --help >/dev/null 2>&1

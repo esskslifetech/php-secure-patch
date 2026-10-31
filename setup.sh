@@ -133,11 +133,17 @@ fi
 if [ "$DO_FIX" = 1 ]; then
   if [ "$vuln" -gt 0 ] || [ "${#HARDENING_RECORDS[@]}" -gt 0 ]; then
     if confirm "Apply automatic fixes (backups kept under ${PSP_BACKUP_DIR:-<backup dir>})?"; then
-      fix_all
+      if ! fix_all; then
+        err "remediation failed — some actions did not complete"
+      fi
       # re-audit after fixes so the report shows the new posture
       step "Re-auditing after fixes"
       detect_php_all; detect_fpm; detect_webservers
       audit_all
+      vuln=0
+      for r in ${CVE_RECORDS[@]+"${CVE_RECORDS[@]}"}; do
+        case "$(printf '%s' "$r" | cut -d'|' -f2)" in VULNERABLE|MITIGATE) vuln=$((vuln+1)) ;; esac
+      done
     else
       info "fixes skipped by user"
     fi
@@ -155,6 +161,9 @@ report_human
 [ -n "$JSON_OUT" ] && report_json "$JSON_OUT"
 
 if [ "$DO_FIX" = 1 ] && [ "$PSP_DRY_RUN" != 1 ]; then
+  if [ "$vuln" -gt 0 ]; then
+    exit 2
+  fi
   exit 0
 fi
 report_exit_code

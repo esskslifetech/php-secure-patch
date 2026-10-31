@@ -183,12 +183,75 @@ EOF
 # ------------------------------------------------------------------------------
 # PHP-FPM
 # ------------------------------------------------------------------------------
+
+# probe_php_fpm_bin <bin> -> prints one PHP_RECS line (sapi=fpm) using the
+# FPM-specific ini (e.g. /etc/php/X.Y/fpm/php.ini) rather than the CLI ini.
+probe_php_fpm_bin() { # -> prints one PHP_RECS line (sapi=fpm) or nothing
+  local bin="$1" base version ini scan settings
+  base="$(basename "$bin")"
+  case "$base" in
+    php-fpm|php-fpm[0-9]*|php-fpm[0-9].[0-9]*) : ;;
+    *) return 0 ;;
+  esac
+
+  version="$("$bin" -v 2>/dev/null | awk 'NR==1{print $2}')"
+  [ -n "$version" ] || return 0
+
+  # FPM binaries support --ini too, and on Debian/Ubuntu that points at the
+  # fpm/php.ini (+ fpm/conf.d) — a different file from the CLI php.ini.
+  ini="$("$bin" --ini 2>/dev/null | awk -F': *' '/Loaded Config File/{print $2; exit}')"
+  [ "$ini" = "(none)" ] && ini=""
+  scan="$("$bin" --ini 2>/dev/null | awk -F': *' '/Scan for additional .ini files/{print $2; exit}')"
+  [ "$scan" = "(none)" ] && scan=""
+
+  # Read live settings from the FPM ini file itself (php-fpm -r does not work).
+  settings=""
+  if [ -n "$ini" ] && [ -f "$ini" ]; then
+    settings="$(ini_file_settings "$ini")"
+  fi
+
+  printf '%s|%s|%s|%s|%s|%s\n' "$bin" "$version" "fpm" "$ini" "$scan" "$settings"
+}
+
+# ini_file_settings <ini-file> -> emits key=value lines (| and ; escaped)
+# by parsing the ini file directly.  Used for FPM runtimes where `php -r`
+# would read the CLI config instead of the FPM config.
+ini_file_settings() { # ini_file_settings <file>
+  local f="$1" line k v
+  [ -f "$f" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    # strip leading/trailing whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ -z "$line" ] && continue
+    case "$line" in '['*|';'*) continue ;; esac
+    k="${line%%=*}"
+    v="${line#*=}"
+    k="${k%"${k##*[![:space:]]}"}"
+    k="${k#"${k%%[![:space:]]*}"}"
+    v="${v%"${v##*[![:space:]]}"}"
+    v="${v#"${v%%[![:space:]]*}"}"
+    # strip inline comments (crude but sufficient for our key set)
+    case "$v" in *' ;'*) v="${v%% ;*}" ;; esac
+    [ -z "$k" ] && continue
+    case "$k" in
+      disable_functions|memory_limit|allow_url_include|allow_url_fopen|cgi.fix_pathinfo|expose_php|phar.readonly|session.upload_progress.enabled|session.cookie_httponly|session.cookie_secure|session.cookie_samesite|session.use_strict_mode|max_execution_time|post_max_size|upload_max_filesize|zend.assertions|display_errors|open_basedir|max_multipart_body_parts|fatal_error_backtraces|opcache.enable|cgi.force_redirect)
+        k="${k//|//}"; k="${k//;/,}"
+        v="${v//|//}"; v="${v//;/,}"
+        printf '%s=%s\n' "$k" "$v"
+        ;;
+    esac
+  done < "$f" | tr '\n' ';'
+}
+
 detect_fpm() {
-  local c n version conf
+  local c n version conf fpm_rec
   FPM_RECS=(); FPM_POOLS=()
   for n in php-fpm php-fpm8.5 php-fpm8.4 php-fpm8.3 php-fpm8.2 php-fpm8.1 php-fpm8.0 php-fpm7.4; do
     c="$(command -v "$n" 2>/dev/null)" || continue
     version="$("$c" -v 2>/dev/null | awk 'NR==1{print $2}')"
+    fpm_rec="$(probe_php_fpm_bin "$c")"
+    [ -n "$fpm_rec" ] && PHP_RECS[${#PHP_RECS[@]}]="$fpm_rec"
     FPM_RECS[${#FPM_RECS[@]}]="$c|$version"
   done
   for c in /usr/sbin/php-fpm* /usr/local/sbin/php-fpm* /opt/homebrew/sbin/php-fpm* /usr/sbin/php-fpm8*; do
@@ -196,6 +259,8 @@ detect_fpm() {
     # same `set -u`/bash-3.2 caveat: guard the expansion
     case " ${FPM_RECS[*]+"${FPM_RECS[*]}"} " in *"|$c|"*|*" $c|"*) continue ;; esac
     version="$("$c" -v 2>/dev/null | awk 'NR==1{print $2}')"
+    fpm_rec="$(probe_php_fpm_bin "$c")"
+    [ -n "$fpm_rec" ] && PHP_RECS[${#PHP_RECS[@]}]="$fpm_rec"
     FPM_RECS[${#FPM_RECS[@]}]="$c|$version"
   done
 

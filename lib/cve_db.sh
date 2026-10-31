@@ -125,7 +125,7 @@ audit_all() {
   CVE_RECORDS=(); HARDENING_RECORDS=()
   local rec ver st worst="FIXED"
 
-  if [ "${#PHP_RECS[@]}" -eq 0 ]; then
+  if [ "${#PHP_RECS[@]}" -eq 0 ] && [ "${#FPM_RECS[@]}" -eq 0 ]; then
     _cve_add "CVE-2026-109618" "NOT-FOUND" "no PHP installation detected" "-"
     _cve_add "CVE-2026-109619" "NOT-FOUND" "no PHP installation detected" "-"
     return 0

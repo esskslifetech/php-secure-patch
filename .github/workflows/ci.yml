@@ -115,7 +115,7 @@ jobs:
           fi
           # shellcheck disable=SC2086
           shellcheck -S warning -x -f gcc $targets > sc.txt 2>&1 || true
-          n="$(grep -cE ':(warning|error):' sc.txt || true)"
+          n="$(grep -cE '(warning|error):' sc.txt || true)"
           echo "warning-severity findings: $n"
           cat sc.txt
           {

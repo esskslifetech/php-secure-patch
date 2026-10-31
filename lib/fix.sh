@@ -30,15 +30,21 @@ fix_all() {
   step "Remediation"
   psp_backup_init
 
-  [ "$PSP_NO_UPGRADE" != 1 ] && fix_upgrade_packages
-  fix_ini_hardening
-  fix_fpm_pools
-  fix_nginx_2019_11043
-  fix_windows_2024_4577
-  fix_projects
-  [ -n "${PSP_SOURCE_DIR:-}" ] && fix_source_patches
-  fix_restart_workers
+  local failed=0
 
+  [ "$PSP_NO_UPGRADE" != 1 ] && fix_upgrade_packages || failed=$((failed+1))
+  fix_ini_hardening || failed=$((failed+1))
+  fix_fpm_pools || failed=$((failed+1))
+  fix_nginx_2019_11043 || failed=$((failed+1))
+  fix_windows_2024_4577 || failed=$((failed+1))
+  fix_projects || failed=$((failed+1))
+  [ -n "${PSP_SOURCE_DIR:-}" ] && fix_source_patches || failed=$((failed+1))
+  fix_restart_workers || failed=$((failed+1))
+
+  if [ "$failed" -gt 0 ]; then
+    err "remediation pass completed with $failed failed action(s)"
+    return 1
+  fi
   ok "remediation pass complete (${#FIX_REPORT[@]} action(s))"
 }
 
@@ -122,9 +128,9 @@ EOF
     FIXED|NOT-AFFECTED)
       cat <<'EOF'
 ; --- CVE-2026-109618: patched runtime ----------------------------------------
-; The OOM-corruption path is gone on this release, so keep a finite ceiling —
-; it is the availability guard against a runaway request.
-memory_limit = 256M
+; The OOM-corruption path is gone on this release.  memory_limit is deliberately
+; NOT overridden here — keep the site's existing, application-specific setting.
+; If you want a finite availability guard, set it yourself (e.g. memory_limit = 256M).
 EOF
       ;;
     *)
@@ -274,15 +280,42 @@ fix_fpm_pools() {
   require_root_for "php-fpm pool edit"
 
   local p conf user pmmr mem lim hardened
+  local -a _seen_confs=()
   for p in ${FPM_POOLS[@]+"${FPM_POOLS[@]}"}; do
     conf="$(printf '%s' "$p" | cut -d'|' -f1)"
+    # skip duplicate conf files (multiple pools in one file)
+    local already=0
+    for s in "${_seen_confs[@]+${_seen_confs[@]}}"; do
+      [ "$s" = "$conf" ] && already=1 && break
+    done
+    [ "$already" = 1 ] && continue
+    _seen_confs[${#_seen_confs[@]}]="$conf"
     pmmr="$(printf '%s' "$p" | cut -d'|' -f5)"
     mem="$(printf '%s' "$p" | cut -d'|' -f6)"
     lim="$(printf '%s' "$p" | cut -d'|' -f7)"
     hardened="$(printf '%s' "$p" | cut -d'|' -f8)"
 
     if [ "$hardened" = "yes" ]; then
-      info "$conf already contains php-secure-patch block — skipping"
+      if [ "$PSP_LOCKDOWN" = 1 ]; then
+        # Already hardened by an earlier run — lockdown still needs pm.max_requests=1.
+        # Replace any existing pm.max_requests line (in or outside the psp block).
+        if [ -w "$conf" ]; then
+          backup_file "$conf" >/dev/null
+          if [ "$PSP_DRY_RUN" = 1 ]; then
+            info "[dry] would set pm.max_requests=1 in $conf (lockdown)"
+          else
+            sed_inplace 's/^pm\.max_requests[[:space:]]*=.*/pm.max_requests = 1/' "$conf"
+            # ensure it exists at all
+            if ! grep -q '^pm\.max_requests[[:space:]]*=' "$conf" 2>/dev/null; then
+              echo "pm.max_requests = 1" >> "$conf"
+            fi
+            ok "lockdown: pm.max_requests=1 set in $conf"
+          fi
+        fi
+        _fix_log "FPM $conf: lockdown pm.max_requests=1 (already hardened)"
+      else
+        info "$conf already contains php-secure-patch block — skipping"
+      fi
       continue
     fi
     [ -f "$conf" ] && [ -w "$conf" ] || { warn "$conf not writable — skipping"; continue; }
@@ -318,7 +351,7 @@ fix_fpm_pools() {
       if [ "$lim" = "unset" ]; then
         echo "security.limit_extensions = .php"
       fi
-      if [ "$pmmr" = "unset" ] || [ "$pmmr" = "0" ]; then
+      if [ "$pmmr" = "unset" ] || [ "$pmmr" = "0" ] || [ "$PSP_LOCKDOWN" = 1 ]; then
         if [ "$PSP_LOCKDOWN" = 1 ]; then
           echo "; lockdown: pm.max_requests=1 — no worker ever serves a second request,"
           echo "; which removes the cross-request reuse CVE-2026-109619 depends on"
@@ -418,6 +451,8 @@ fix_windows_2024_4577() {
   else
     cp "$PSP_HARDENING/windows-cve-2024-4577.htaccess" "$ht" 2>/dev/null
     cp "$PSP_HARDENING/windows-cve-2024-4577.ps1" "$ps" 2>/dev/null
+    record_created "$ht" 2>/dev/null || true
+    record_created "$ps" 2>/dev/null || true
     ok "CVE-2024-4577 mitigation kit written to $outdir/"
     _fix_log "EMIT $ht and $ps (CVE-2024-4577)"
   fi
@@ -471,6 +506,7 @@ Run `composer audit` (Composer projects) and keep frameworks current, but treat
 the runtime upgrade as the actual fix.
 EOF
     _fix_log "PROJECT $path: PHP2SHELL-README.txt dropped"
+    record_created "$path/PHP2SHELL-README.txt" 2>/dev/null || true
   done
   # composer audit opportunistically (report only)
   if have_cmd composer; then
@@ -493,7 +529,8 @@ fix_source_patches() {
     return 1
   fi
   run "$PSP_PATCHES/apply-source-patches.sh" "$PSP_SOURCE_DIR"
-  _fix_log "SOURCE patches applied to $PSP_SOURCE_DIR"
+  _fix_log "SOURCE patches applied to $PSP_SOURCE_DIR (note: source-tree edits are external to the backup set and cannot be reverted by ./rollback.sh)"
+  warn "source patches were applied to $PSP_SOURCE_DIR — these edits are outside the backup set and are NOT reversible via ./rollback.sh"
 }
 
 # ------------------------------------------------------------------------------
