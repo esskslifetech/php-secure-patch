@@ -7,8 +7,14 @@ Thanks for taking the time to improve `php-secure-patch`, maintained by
 
 * **bash 3.2 compatible.** macOS still ships 3.2, so no associative arrays, no
   `mapfile`, no `${var,,}` / `${var^^}`, no `&>>`, no globstar `**`, no
-  `readarray`. Guard array expansion with `${ARR[@]+"${ARR[@]}"}` because
-  `set -u` is on.
+  `readarray`.
+* **Never expand an array unguarded.** `set -u` is on, and bash 3.2 treats
+  `"${ARR[@]}"` / `"${ARR[*]}"` on an **empty** array as an unbound variable;
+  bash 4.4+ silently allows it. So a declared-but-empty array — the "scan found
+  nothing" path, i.e. the case CI's clean-host run exercises and most manual
+  testing does not — aborts on macOS while looking perfect on Linux. Always
+  write `${ARR[@]+"${ARR[@]}"}`, `${ARR[*]+"${ARR[*]}"}` and
+  `ARR=(${TMP[@]+"${TMP[@]}"})`.
 * **No new runtime dependencies.** bash, coreutils, awk, sed and grep only.
   Anything optional must degrade gracefully when missing.
 * **Every `--fix` action must be reversible.** Back the file up first, record it
@@ -26,7 +32,8 @@ Thanks for taking the time to improve `php-secure-patch`, maintained by
 ./tests/run-tests.sh                      # must stay green, no root needed
 bash -n setup.sh rollback.sh install.sh lib/*.sh hunt/hunt.sh \
         tests/run-tests.sh patches/apply-source-patches.sh
-shellcheck -S warning setup.sh lib/*.sh   # advisory, but do not add new findings
+shellcheck -S error setup.sh lib/*.sh     # must be clean; CI blocks on this
+shellcheck -S warning setup.sh lib/*.sh   # advisory — do not add new findings
 php -l scanner/project-scanner.php        # if you touched the PHP scanner
 ```
 

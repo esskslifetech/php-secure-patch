@@ -13,6 +13,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # The toolkit's own colours are disabled so logs stay readable.
+  NO_COLOR: "1"
+
 jobs:
   self-tests:
     name: self-tests (${{ matrix.os }})
@@ -21,20 +25,28 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-    # macOS runners use the system bash 3.2, which is the compatibility floor.
-    # Kept advisory until that path is proven green in CI.
-    continue-on-error: ${{ matrix.os == 'macos-latest' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      # Which bash actually runs matters: macOS ships 3.2 and that is the
+      # compatibility floor, but a Homebrew bash earlier in PATH would hide
+      # 3.2-only breakage. Print it so a failure is interpretable.
+      - name: Report the shell in use
+        shell: bash
+        run: |
+          printf 'shell     : %s\n' "$BASH_VERSION"
+          printf 'resolved  : %s\n' "$(command -v bash)"
+          bash --version | head -1
 
       - name: Syntax check every script
         shell: bash
         run: |
-          set -eu
+          set -u
+          rc=0
           for f in $(find . -type f -name '*.sh' -not -path './.git/*'); do
-            bash -n "$f"
-            printf 'ok  %s\n' "$f"
+            if bash -n "$f"; then printf 'ok  %s\n' "$f"; else printf 'BAD %s\n' "$f"; rc=1; fi
           done
+          exit "$rc"
 
       - name: Run the self-test suite
         shell: bash
@@ -43,36 +55,90 @@ jobs:
       - name: Audit-mode smoke test (dry-run, no changes)
         shell: bash
         run: |
-          set -eu
-          ./setup.sh --dry-run --no-upgrade || rc=$?
-          # 0 = clean, 2 = findings present. Both mean the toolkit worked.
-          case "${rc:-0}" in
-            0|2) echo "dry-run completed with rc=${rc:-0}" ;;
-            *) echo "unexpected exit code ${rc}"; exit 1 ;;
+          # A host with nothing to find must still exit 0 (clean) or 2 (findings).
+          # Capture the output: when this fails the log is the only explanation,
+          # and public repos hide logs from anonymous readers — so surface the
+          # tail as an annotation, and re-run under `bash -x` for the trace.
+          out="$(mktemp "${TMPDIR:-/tmp}/psp-smoke.XXXXXX")"
+          trace="$(mktemp "${TMPDIR:-/tmp}/psp-trace.XXXXXX")"
+          rc=0
+          ./setup.sh --dry-run --no-upgrade >"$out" 2>&1 || rc=$?
+          case "$rc" in
+            0|2)
+              echo "dry-run completed with rc=$rc"
+              tail -n 20 "$out"
+              ;;
+            *)
+              echo "unexpected exit code $rc"
+              cat "$out"
+              bash -x ./setup.sh --dry-run --no-upgrade >/dev/null 2>"$trace" || true
+              echo "--- trace tail ---"
+              tail -n 15 "$trace"
+              echo "::error::setup.sh exited $rc on $(command -v bash) ($BASH_VERSION)"
+              tail -n 10 "$trace" | while IFS= read -r line; do
+                printf '::error::%s\n' "$line"
+              done
+              exit 1
+              ;;
           esac
 
   shellcheck:
     name: shellcheck
     runs-on: ubuntu-latest
-    # Advisory: the tree is not shellcheck-clean yet. Do not add new findings.
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
       - name: Install shellcheck
         run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
-      - name: Lint
+
+      # Two tiers, deliberately different:
+      #   error severity  -> blocks. A parse error or a broken expansion is
+      #                      always a real defect and must never ship.
+      #   warning severity-> reported, does not block. The tree is not
+      #                      warning-clean yet (mostly SC2046 on `for x in
+      #                      $(find ...)`). Findings stay visible here and in
+      #                      the job summary so they can be burned down without
+      #                      a red X that nobody reads.
+      - name: Lint (errors block, warnings are reported)
+        shell: bash
         run: |
-          shellcheck -S warning -x \
-            setup.sh rollback.sh install.sh \
-            lib/*.sh hunt/hunt.sh tests/run-tests.sh \
-            patches/apply-source-patches.sh
+          set -u
+          targets="setup.sh rollback.sh install.sh lib/common.sh lib/detect.sh
+                   lib/cve_db.sh lib/fix.sh lib/report.sh hunt/hunt.sh
+                   tests/run-tests.sh patches/apply-source-patches.sh"
+          # shellcheck disable=SC2086
+          if shellcheck -S error -x $targets; then
+            echo "error-severity: clean"
+          else
+            echo "::error::shellcheck reported error-severity findings"
+            exit 1
+          fi
+          # shellcheck disable=SC2086
+          shellcheck -S warning -x -f gcc $targets > sc.txt 2>&1 || true
+          n="$(grep -cE ':(warning|error):' sc.txt || true)"
+          echo "warning-severity findings: $n"
+          cat sc.txt
+          {
+            echo "### shellcheck — warning severity"
+            echo
+            echo "Findings: **$n** (advisory; error severity is enforced above)"
+            echo
+            echo '```'
+            cat sc.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          head -10 sc.txt | while IFS= read -r line; do
+            printf '::warning::%s\n' "$line"
+          done
 
   php-lint:
     name: php lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
       - name: Install php-cli
         run: sudo apt-get update -qq && sudo apt-get install -y php-cli
+
       - name: Lint the project scanner
         run: php -l scanner/project-scanner.php

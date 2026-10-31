@@ -131,7 +131,7 @@ audit_all() {
     return 0
   fi
 
-  for rec in "${PHP_RECS[@]}"; do
+  for rec in ${PHP_RECS[@]+"${PHP_RECS[@]}"}; do
     ver="$(rec_version "$rec")"
     audit_php2shell_one "$rec" "$ver"
     audit_2024_4577_one "$rec" "$ver"
@@ -230,7 +230,7 @@ audit_2019_11043_one() {
 audit_nginx_cve_2019_11043() {
   [ "${#NGINX_SPLITPATH_CONFS[@]}" -gt 0 ] || return 0
   local f
-  for f in "${NGINX_SPLITPATH_CONFS[@]}"; do
+  for f in ${NGINX_SPLITPATH_CONFS[@]+"${NGINX_SPLITPATH_CONFS[@]}"}; do
     if grep -qs 'php-secure-patch.*CVE-2019-11043' "$f"; then
       _hardening_add "H-100" "info" "$f" "nginx fastcgi_split_path_info present (guard already applied)" "-"
     else
@@ -257,7 +257,7 @@ audit_fpm_hardening() {
   [ "${#FPM_POOLS[@]}" -gt 0 ] || return 0
   local p conf user pmmr mem lim hardened vuln=0
   psp_any_vulnerable_php && vuln=1
-  for p in "${FPM_POOLS[@]}"; do
+  for p in ${FPM_POOLS[@]+"${FPM_POOLS[@]}"}; do
     conf="$(printf '%s' "$p" | cut -d'|' -f1)"
     pmmr="$(printf '%s' "$p" | cut -d'|' -f5)"
     mem="$(printf '%s' "$p" | cut -d'|' -f6)"
@@ -291,7 +291,7 @@ audit_fpm_hardening() {
 audit_oldest_php() {
   # Branch-level EOL advisory (only once)
   local rec ver mm
-  for rec in "${PHP_RECS[@]}"; do
+  for rec in ${PHP_RECS[@]+"${PHP_RECS[@]}"}; do
     ver="$(rec_version "$rec")"; mm="$(version_major_minor "$ver")"
     case "$mm" in
       8.2) _hardening_add "H-110" "info" "$ver" "PHP 8.2 is security-only until 2026-12-31 — plan upgrade to 8.3+" "plan migration" ;;

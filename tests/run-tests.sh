@@ -107,6 +107,15 @@ assert_contains "laravel detected" "laravel" "$lv_rec"
 assert_contains "laravel version from lock" "v11.3.0" "$lv_rec"
 assert_contains "php constraint parsed" "8.2" "$lv_rec"
 
+step "7b. project detection with nothing to find"
+# "Scan found nothing" is the normal case on a clean host — and it is exactly
+# where an empty-array expansion aborted the run under `set -u` on bash 3.2
+# (macOS). The empty result must be a clean zero, not a failure.
+mkdir -p "$TMP/nothing-here"
+detect_projects "$TMP/nothing-here" >/dev/null 2>&1
+assert_rc "detect_projects on a tree with no projects exits 0" 0 "$?"
+assert_eq "no project records for a tree with no projects" 0 "${#PROJECT_RECS[@]}"
+
 step "8. patch files present and non-empty"
 for p in upstream-php2shell-CVE-2026-109618-109619.patch \
          CVE-2019-11043-env-path-info-underflow.patch \

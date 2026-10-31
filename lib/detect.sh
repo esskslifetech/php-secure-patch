@@ -152,7 +152,7 @@ probe_php_bin() { # -> prints one PHP_RECS line (or nothing)
 }
 
 detect_php_all() {
-  local cand rec dup seen=""
+  local cand rec seen=""
   PHP_RECS=()
   while IFS= read -r cand; do
     [ -n "$cand" ] || continue
@@ -184,7 +184,7 @@ EOF
 # PHP-FPM
 # ------------------------------------------------------------------------------
 detect_fpm() {
-  local c n bin version conf
+  local c n version conf
   FPM_RECS=(); FPM_POOLS=()
   for n in php-fpm php-fpm8.5 php-fpm8.4 php-fpm8.3 php-fpm8.2 php-fpm8.1 php-fpm8.0 php-fpm7.4; do
     c="$(command -v "$n" 2>/dev/null)" || continue
@@ -193,14 +193,13 @@ detect_fpm() {
   done
   for c in /usr/sbin/php-fpm* /usr/local/sbin/php-fpm* /opt/homebrew/sbin/php-fpm* /usr/sbin/php-fpm8*; do
     [ -x "$c" ] || continue
-    case " ${FPM_RECS[*]} " in *"|$c|"*|*" $c|"*) continue ;; esac
+    # same `set -u`/bash-3.2 caveat: guard the expansion
+    case " ${FPM_RECS[*]+"${FPM_RECS[*]}"} " in *"|$c|"*|*" $c|"*) continue ;; esac
     version="$("$c" -v 2>/dev/null | awk 'NR==1{print $2}')"
     FPM_RECS[${#FPM_RECS[@]}]="$c|$version"
   done
 
   # pool configs
-  local pooldirs="/etc/php /etc/php-fpm.d /etc/php-fpm.conf /usr/local/etc/php-fpm.d \
-                  /opt/homebrew/etc/php /opt/homebrew/etc/php-fpm.conf"
   for conf in $(find /etc/php /usr/local/etc/php-fpm.d /opt/homebrew/etc/php \
                  -type f -name '*.conf' 2>/dev/null | grep -E 'fpm|pool' ; \
                ls /etc/php-fpm.conf /etc/php-fpm.d/*.conf 2>/dev/null); do
@@ -333,7 +332,10 @@ detect_projects() {
     seen="$seen $path"
     out[${#out[@]}]="$rec"
   done
-  PROJECT_RECS=("${out[@]}")
+  # Empty-array expansion is an unbound-variable error under `set -u` in
+  # bash 3.2 (the macOS default), so only expand when there is something to
+  # expand. This is the "scan found nothing" path — i.e. the common case.
+  PROJECT_RECS=(${out[@]+"${out[@]}"})
 
   if [ "${#PROJECT_RECS[@]}" -gt 0 ]; then
     ok "found ${#PROJECT_RECS[@]} PHP project(s)"
@@ -348,7 +350,7 @@ detect_projects() {
 _project_add() { PROJECT_RECS[${#PROJECT_RECS[@]}]="$1|$2|$3|$4|$5"; }
 
 detect_projects_wp() {
-  local r d ver
+  local d ver
   for d in $(find "$1" -maxdepth 4 -type f -name 'wp-load.php' 2>/dev/null); do
     d="$(dirname "$d")"
     [ -f "$d/wp-includes/version.php" ] || continue
@@ -358,7 +360,7 @@ detect_projects_wp() {
 }
 
 detect_projects_drupal() {
-  local r d ver
+  local d ver
   for d in $(find "$1" -maxdepth 5 -type f -path '*/core/lib/Drupal.php' 2>/dev/null); do
     d="$(dirname "$(dirname "$(dirname "$d")")")"
     ver="$(grep -oE "const VERSION = '[^']+'" "$d/core/lib/Drupal.php" 2>/dev/null | sed "s/.*'\(.*\)'/\1/")"
