@@ -1,0 +1,104 @@
+name: Bug report
+description: Something in the toolkit misbehaved, or the audit got it wrong.
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report **security vulnerabilities** here — follow
+        [SECURITY.md](../SECURITY.md) instead.
+
+        Redact credentials, tokens, customer hostnames and real log lines before
+        pasting anything.
+
+  - type: dropdown
+    id: command
+    attributes:
+      label: What were you running?
+      multiple: true
+      options:
+        - ./setup.sh (audit only)
+        - sudo ./setup.sh --fix
+        - sudo ./setup.sh --fix --dry-run
+        - ./rollback.sh
+        - sudo ./install.sh
+        - ./hunt/hunt.sh
+        - ./patches/apply-source-patches.sh
+        - ./tests/run-tests.sh
+        - scanner/project-scanner.php
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+      description: Include the exact output, including the exit code.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: report
+    attributes:
+      label: Audit output
+      description: |
+        Paste the relevant part of the report (or `--json` output, redacted).
+        The affected section, the verdict, and the detected version are the
+        parts that matter.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / distribution
+      placeholder: e.g. Ubuntu 24.04, RHEL 9.4, Alpine 3.20, macOS 15, Windows 11 (Git-Bash)
+    validations:
+      required: true
+
+  - type: input
+    id: php
+    attributes:
+      label: PHP runtime
+      placeholder: e.g. 8.3.10 PHP-FPM, 8.1.29 mod_php, or "none on this host"
+    validations:
+      required: true
+
+  - type: input
+    id: webserver
+    attributes:
+      label: Web server
+      placeholder: e.g. nginx 1.26, Apache 2.4.62, LiteSpeed, FrankenPHP, none
+    validations:
+      required: false
+
+  - type: input
+    id: shell
+    attributes:
+      label: bash version
+      description: Output of `bash --version | head -1`. macOS users are on 3.2.
+      placeholder: e.g. GNU bash 5.2.21
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues for the same problem.
+          required: true
+        - label: I removed secrets, hostnames and customer data from this report.
+          required: true
+        - label: This is not a security vulnerability report (those go to SECURITY.md).
+          required: true
+        - label: If `--fix` was involved, I have a backup set and can run `rollback.sh`.
+          required: false

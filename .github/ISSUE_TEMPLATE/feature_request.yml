@@ -1,0 +1,52 @@
+name: Feature request
+description: Suggest a detection, a CVE, a distro or a fix path the toolkit should handle.
+title: "[feat] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Detection (OS, PHP, SAPI, web server, project)
+        - CVE coverage / verdict logic
+        - Fix strategy (ini, FPM, nginx, Apache, packages)
+        - Source patches
+        - Reporting / JSON output / exit codes
+        - Compromise hunting
+        - Install / packaging / docs
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the host, the stack and the gap you hit.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should the toolkit do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including doing it by hand, or via the distro.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints to keep in mind
+      options:
+        - label: It can be implemented in bash 3.2 with no new dependencies.
+          required: false
+        - label: It must be reversible from `rollback.sh`.
+          required: false

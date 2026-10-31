@@ -1,0 +1,30 @@
+# ---- release artifacts -------------------------------------------------------
+# Built from the source tree on demand; publish them as release assets instead
+# of committing them.
+*.tar.gz
+*.tgz
+*.zip
+dist/
+build/
+
+# ---- output produced by running the toolkit ----------------------------------
+/backups/
+/reports/
+report.json
+*.log
+99-pSP-hardening.ini
+*.bak
+*.psp-backup
+
+# ---- editor / OS noise -------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*~
+
+# ---- local environment -------------------------------------------------------
+.env
+.env.*

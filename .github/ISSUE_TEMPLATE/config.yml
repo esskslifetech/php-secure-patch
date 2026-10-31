@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability in this toolkit
+    url: https://github.com/esskslifetech/php-secure-patch/security/advisories/new
+    about: Report privately. Do not open a public issue for a security bug.
+  - name: A PHP vulnerability this toolkit documents
+    url: https://github.com/php/php-src/security/advisories
+    about: CVE-2026-109618, CVE-2026-109619, CVE-2026-115560 belong with the PHP project.
+  - name: Question about the fixes themselves
+    url: https://www.php.net/security
+    about: Package and patch guidance is tracked by the PHP project and your distribution.

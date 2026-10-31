@@ -1,0 +1,49 @@
+title: PHP2Shell Exploitation Attempt (CVE-2026-109618 / CVE-2026-109619 / CVE-2024-4577)
+id: 7f1f2b1e-php2shell-2026-109618-109619
+status: stable
+description: >
+  Detects web-request indicators associated with exploitation attempts against
+  the PHP2Shell vulnerabilities (CVE-2026-109618 OOM corruption, CVE-2026-109619
+  stale global state) and the related php-cgi argument-injection family
+  (CVE-2024-4577 / CVE-2012-1823).  Session-upload-progress probing is the
+  primary CVE-2026-109619 producer path and needs no session_start(); exploit
+  bodies are tiny (~450 B) so size-only rules fail.  Modeled on the detection
+  guidance in CISA's October 2026 PHP alert and NCSC-NL/php2shell.
+references:
+  - https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching
+  - https://github.com/NCSC-NL/php2shell
+  - https://github.com/advisories/GHSA-6wmf-4rv5-p3rp
+author: php-secure-patch
+date: 2026-10-31
+tags:
+  - attack.initial-access
+  - attack.t1190
+  - cve.2026-109618
+  - cve.2026-109619
+  - cve.2024-4577
+logsource:
+  category: webserver
+  product: any
+detection:
+  selection_upload_progress:
+    cs-uri-query|contains:
+      - 'PHP_SESSION_UPLOAD_PROGRESS'
+      - 'upload_progress'
+  selection_cgi_args:
+    cs-uri-query|contains:
+      - '%ad'
+      - '%AD'
+      - '-d%20'
+      - '-s%20'
+      - '-d+'
+      - 'allow_url_include'
+      - 'auto_prepend_file'
+  selection_multipart_marker:
+    cs-method: 'POST'
+    sc-status: 200
+    cs-uri-query|contains: 'PHP_SESSION_UPLOAD_PROGRESS'
+  condition: selection_upload_progress or selection_cgi_args
+falsepositives:
+  - Legitimate upload-progress UIs (rare; php.net recommends the feature stay off)
+  - Security scanners and your own PHP2Shell hunts (whitelist them)
+level: high

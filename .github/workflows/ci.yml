@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  self-tests:
+    name: self-tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    # macOS runners use the system bash 3.2, which is the compatibility floor.
+    # Kept advisory until that path is proven green in CI.
+    continue-on-error: ${{ matrix.os == 'macos-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax check every script
+        shell: bash
+        run: |
+          set -eu
+          for f in $(find . -type f -name '*.sh' -not -path './.git/*'); do
+            bash -n "$f"
+            printf 'ok  %s\n' "$f"
+          done
+
+      - name: Run the self-test suite
+        shell: bash
+        run: ./tests/run-tests.sh
+
+      - name: Audit-mode smoke test (dry-run, no changes)
+        shell: bash
+        run: |
+          set -eu
+          ./setup.sh --dry-run --no-upgrade || rc=$?
+          # 0 = clean, 2 = findings present. Both mean the toolkit worked.
+          case "${rc:-0}" in
+            0|2) echo "dry-run completed with rc=${rc:-0}" ;;
+            *) echo "unexpected exit code ${rc}"; exit 1 ;;
+          esac
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    # Advisory: the tree is not shellcheck-clean yet. Do not add new findings.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
+      - name: Lint
+        run: |
+          shellcheck -S warning -x \
+            setup.sh rollback.sh install.sh \
+            lib/*.sh hunt/hunt.sh tests/run-tests.sh \
+            patches/apply-source-patches.sh
+
+  php-lint:
+    name: php lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install php-cli
+        run: sudo apt-get update -qq && sudo apt-get install -y php-cli
+      - name: Lint the project scanner
+        run: php -l scanner/project-scanner.php
