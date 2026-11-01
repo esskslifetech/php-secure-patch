@@ -59,8 +59,8 @@ jobs:
           # Capture the output: when this fails the log is the only explanation,
           # and public repos hide logs from anonymous readers — so surface the
           # tail as an annotation, and re-run under `bash -x` for the trace.
-          out="$(mktemp "${TMPDIR:-/tmp}/p2s-smoke.XXXXXX")"
-          trace="$(mktemp "${TMPDIR:-/tmp}/p2s-trace.XXXXXX")"
+          out="$(mktemp "${TMPDIR:-/tmp}/psp-smoke.XXXXXX")"
+          trace="$(mktemp "${TMPDIR:-/tmp}/psp-trace.XXXXXX")"
           rc=0
           ./setup.sh --dry-run --no-upgrade >"$out" 2>&1 || rc=$?
           case "$rc" in
@@ -104,10 +104,8 @@ jobs:
         run: |
           set -u
           targets="setup.sh rollback.sh install.sh lib/common.sh lib/detect.sh
-                   lib/brotli_db.sh lib/detect_brotli.sh lib/cve_db.sh lib/fix.sh
-                   lib/contain.sh lib/verify.sh lib/report.sh hunt/hunt.sh
-                   tests/run-tests.sh patches/apply-source-patches.sh
-                   patches/apply-brotli-patch.sh"
+                   lib/cve_db.sh lib/fix.sh lib/report.sh hunt/hunt.sh
+                   tests/run-tests.sh patches/apply-source-patches.sh"
           # shellcheck disable=SC2086
           if shellcheck -S error -x $targets; then
             echo "error-severity: clean"
@@ -133,88 +131,6 @@ jobs:
             printf '::warning::%s\n' "$line"
           done
 
-  guards:
-    name: containment guards (node/python)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      # A preload that throws on load is worse than no preload: it takes the
-      # service down on restart. Syntax-check both guards and exercise the Node
-      # one against a real HTTP server (the same test the suite runs).
-      - name: Syntax-check the Node preload
-        run: node --check contain/guards/node-p2s-guard.cjs
-
-      - name: Compile-check the Python hook
-        run: python3 -m py_compile contain/guards/python-p2s-guard.py
-
-      - name: Node preload refuses a Brotli request body
-        run: |
-          set -euo pipefail
-          cat > /tmp/app.js <<'EOF'
-          const http = require('http');
-          http.createServer((req, res) => { req.resume(); req.on('end', () => { res.writeHead(200); res.end('ok'); }); })
-              .listen(18080);
-          EOF
-          node -r "$PWD/contain/guards/node-p2s-guard.cjs" /tmp/app.js &
-          pid=$!
-          sleep 1
-          code="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Encoding: br' --data-binary x http://127.0.0.1:18080/)"
-          plain="$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary x http://127.0.0.1:18080/)"
-          kill "$pid" || true
-          echo "br=$code plain=$plain"
-          [ "$code" = "415" ]
-          [ "$plain" = "200" ]
-
-  brotli-patch:
-    name: Brotli patch applies to upstream (CVE-2026-111497)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      # The patches are the claim this project makes about being able to fix
-      # vendored copies permanently, so CI re-proves it against pristine
-      # upstream tags rather than trusting the committed diff.
-      - name: Fetch pristine Brotli releases
-        run: |
-          set -euo pipefail
-          for tag in v1.2.0 v1.1.0 v1.0.9; do
-            curl -fsSL -o "/tmp/$tag.tar.gz" "https://codeload.github.com/google/brotli/tar.gz/refs/tags/$tag"
-            tar xzf "/tmp/$tag.tar.gz" -C /tmp
-          done
-
-      - name: Apply + verify (compile check) on 1.2.0, 1.1.0 and 1.0.9
-        run: |
-          ./patches/apply-brotli-patch.sh /tmp/brotli-1.2.0 --verify
-          ./patches/apply-brotli-patch.sh /tmp/brotli-1.1.0 --verify
-          ./patches/apply-brotli-patch.sh /tmp/brotli-1.0.9 --verify
-
-      - name: Re-apply must be detected, not double-patched
-        run: |
-          set -euo pipefail
-          if ./patches/apply-brotli-patch.sh /tmp/brotli-1.2.0 2>&1 | grep -q "already contains the fix"; then
-            echo "re-apply correctly skipped"
-          else
-            echo "::error::re-applying the patch was not detected"
-            exit 1
-          fi
-
-      - name: Revert restores the original, and the patch re-applies
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/clean.tar.gz https://codeload.github.com/google/brotli/tar.gz/refs/tags/v1.0.9
-          rm -rf /tmp/clean-1.0.9 && mkdir -p /tmp/clean-1.0.9
-          tar xzf /tmp/clean.tar.gz -C /tmp/clean-1.0.9 --strip-components=1
-          ./patches/apply-brotli-patch.sh /tmp/clean-1.0.9 >/dev/null
-          grep -q "BROTLI_SAFE_WITH_STATUS" /tmp/clean-1.0.9/c/dec/decode.c
-          ./patches/apply-brotli-patch.sh /tmp/clean-1.0.9 --revert >/dev/null
-          if grep -q "BROTLI_SAFE_WITH_STATUS" /tmp/clean-1.0.9/c/dec/decode.c; then
-            echo "::error::revert left the fix behind"
-            exit 1
-          fi
-          ./patches/apply-brotli-patch.sh /tmp/clean-1.0.9 --dry-run | grep -q "applies cleanly"
-          echo "apply -> revert -> apply is clean"
-
   php-lint:
     name: php lint
     runs-on: ubuntu-latest
@@ -226,37 +142,3 @@ jobs:
 
       - name: Lint the project scanner
         run: php -l scanner/project-scanner.php
-
-  windows-smoke:
-    name: windows (git-bash) smoke — advisory
-    runs-on: windows-latest
-    # Advisory until the suite is green there on a real host: the toolkit must
-    # parse and run its audit under Git-Bash, but Windows-specific paths and
-    # missing coreutils can differ from Linux/macOS CI runners. Reported, not
-    # gating, so a red X never blocks a security fix.
-    continue-on-error: true
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Report the shell
-        run: |
-          echo "$BASH_VERSION"
-          uname -a
-
-      - name: Syntax-check every script
-        run: |
-          rc=0
-          for f in $(find . -type f -name '*.sh' -not -path './.git/*'); do
-            bash -n "$f" || rc=1
-          done
-          exit "$rc"
-
-      - name: Help + audit must not crash
-        run: |
-          ./setup.sh --help >/dev/null
-          ./setup.sh --dry-run --no-upgrade --scan-path . >/dev/null 2>&1; rc=$?
-          echo "audit rc=$rc"
-          [ "$rc" = 0 ] || [ "$rc" = 2 ]
