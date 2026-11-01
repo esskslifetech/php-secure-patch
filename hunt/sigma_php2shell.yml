@@ -13,7 +13,7 @@ references:
   - https://www.cisa.gov/news-events/alerts/2026/10/21/critical-vulnerabilities-php-require-immediate-patching
   - https://github.com/NCSC-NL/php2shell
   - https://github.com/advisories/GHSA-6wmf-4rv5-p3rp
-author: php-secure-patch
+author: protection2shell
 date: 2026-10-31
 tags:
   - attack.initial-access

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for taking the time to improve `php-secure-patch`, maintained by
+Thanks for taking the time to improve `protection2shell`, maintained by
 **ESS KS Life Tech**.
 
 ## Ground rules
@@ -20,7 +20,18 @@ Thanks for taking the time to improve `php-secure-patch`, maintained by
 * **Every `--fix` action must be reversible.** Back the file up first, record it
   in `MANIFEST.txt`, and verify `rollback.sh` can restore it.
 * **Fast failure over guessing.** If a value cannot be verified, report it as
-  unknown rather than assuming the safe case.
+  unknown rather than assuming the safe case. A capability probe may conclude
+  "fixed" only from positive evidence (for Brotli: the `BLOCK_SWITCH` error
+  string); absence of evidence is `unknown`, never `vulnerable` *and* never
+  `fixed`.
+* **Patches are generated, never written by hand.** Every `.patch` must come
+  from a real upstream diff (or, for an explicit backport, be proven to compile
+  and behave identically), state its provenance in the file header, and be
+  verified to apply at `--fuzz=0` against the tree named in `patches/README.md`.
+* **Containment must fail closed and be reversible.** A guard that lets a
+  request through because a directive was misspelled is worse than no guard: it
+  buys false confidence. Every containment artifact is backed up, recorded for
+  removal, and validated by the target's own config test where one exists.
 * **Idempotent.** Running `setup.sh --fix` twice must not duplicate blocks in a
   config file or stack backups indefinitely.
 * **Platform reality.** Nothing may assume GNU coreutils; `sed -i` differs
@@ -31,10 +42,16 @@ Thanks for taking the time to improve `php-secure-patch`, maintained by
 ```sh
 ./tests/run-tests.sh                      # must stay green, no root needed
 bash -n setup.sh rollback.sh install.sh lib/*.sh hunt/hunt.sh \
-        tests/run-tests.sh patches/apply-source-patches.sh
+        tests/run-tests.sh patches/*.sh
 shellcheck -S error setup.sh lib/*.sh     # must be clean; CI blocks on this
 shellcheck -S warning setup.sh lib/*.sh   # advisory — do not add new findings
+node --check contain/guards/node-p2s-guard.cjs
+python3 -m py_compile contain/guards/python-p2s-guard.py
 php -l scanner/project-scanner.php        # if you touched the PHP scanner
+
+# if you touched patches/brotli/ — prove it against pristine upstream:
+curl -fsSL -o /tmp/b.tgz https://codeload.github.com/google/brotli/tar.gz/refs/tags/v1.2.0
+tar xzf /tmp/b.tgz -C /tmp && ./patches/apply-brotli-patch.sh /tmp/brotli-1.2.0 --verify
 ```
 
 If you changed detection, verdict logic, exit codes or reporting, add a case to

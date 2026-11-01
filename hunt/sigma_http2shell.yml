@@ -1,0 +1,41 @@
+title: HTTP2Shell Brotli Block-Switch Decode Failure (CVE-2026-111497)
+id: 4b1f7c22-http2shell-2026-111497
+status: test
+description: >
+  Detects the error code introduced by the Brotli fix for CVE-2026-111497.
+  BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH (numeric -17) has exactly one
+  producer: `max_block_type <= 1` in DecodeBlockTypeAndLength(). It therefore
+  cannot appear on legitimate traffic — it is what a PATCHED decoder emits
+  *instead of* corrupting memory when it receives a crafted block-switch stream.
+  Treat every hit as "somebody sent a trigger to this host", not as a crash to
+  be tolerated. On an unpatched decoder the same input produces no such line:
+  look instead for SIGSEGV/SIGABRT, worker restarts and 100% CPU spins.
+references:
+  - https://github.com/advisories/GHSA-9v8h-qqgm-4m35
+  - https://codeload.github.com/google/brotli/tar.gz/refs/tags/v1.2.1
+author: protection2shell
+date: 2026-10-31
+tags:
+  - attack.initial-access
+  - attack.t1190
+  - cve.2026-111497
+logsource:
+  category: application
+  product: any
+detection:
+  selection_error_code:
+    - 'BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH'
+    - 'ERROR_FORMAT_BLOCK_SWITCH'
+  selection_numeric:
+    - 'ERROR_FORMAT_BLOCK_SWITCH (-17)'
+    - 'decode error -17'
+  selection_generic_brotli_failure:
+    - 'brotli'
+  selection_block_switch:
+    - 'block switch'
+  condition: selection_error_code or selection_numeric or (selection_generic_brotli_failure and selection_block_switch)
+falsepositives:
+  - A deliberately crafted malformed Brotli stream in a test suite or decoder
+    fuzzing job (whitelist the builder, not the pattern)
+  - A client that legitimately sends a corrupt stream (still worth investigating)
+level: critical

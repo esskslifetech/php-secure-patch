@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# php-secure-patch :: patches/apply-source-patches.sh
+# protection2shell :: patches/apply-source-patches.sh
 # Author: ESS KS Life Tech — MIT licensed, see LICENSE
 # Applies the bundled security patches to a PHP source tree, choosing the right
 # set for the tree's branch.  Every patch in this directory is extracted from
@@ -17,9 +17,11 @@
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
-PSP_ROOT="$(cd "$HERE/.." && pwd -P)"
-. "$PSP_ROOT/lib/common.sh"
-. "$PSP_ROOT/lib/cve_db.sh"
+P2S_ROOT="$(cd "$HERE/.." && pwd -P)"
+. "$P2S_ROOT/lib/common.sh"
+. "$P2S_ROOT/lib/cve_db.sh"
+
+usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
 SRC="${1:-}"; shift || true
 [ -n "$SRC" ] && [ -d "$SRC" ] || die "usage: $0 /path/to/php-src [--dry-run] [--rebuild] [--force]"
@@ -28,9 +30,11 @@ SRC="$(cd "$SRC" && pwd -P)"
 DRY=0; REBUILD=0; FORCE=0
 for a in "$@"; do
   case "$a" in
-    --dry-run) PSP_DRY_RUN=1; DRY=1 ;;
+    --dry-run) P2S_DRY_RUN=1; DRY=1 ;;
     --rebuild) REBUILD=1 ;;
     --force)   FORCE=1 ;;
+    --help|-h) usage; exit 0 ;;
+    *)         die "unknown option: $a (try --help)" ;;
   esac
 done
 
@@ -47,7 +51,7 @@ try_patch() { # try_patch <file> <label>
   local pf="$1" label="$2"
   [ -f "$pf" ] || { warn "patch missing: $pf"; return 1; }
   step "Applying: $label"
-  if [ "$PSP_DRY_RUN" = 1 ]; then
+  if [ "$P2S_DRY_RUN" = 1 ]; then
     ( cd "$SRC" && patch -p1 --dry-run --forward --fuzz=3 < "$pf" ) \
       && ok "[dry] $label would apply cleanly" && return 0 \
       || { warn "[dry] $label does NOT apply cleanly to this tree"; return 1; }
@@ -103,7 +107,7 @@ if [ "$st" = "VULNERABLE" ] || [ "$st" = "EOL-NO-FIX" ]; then
 fi
 
 # ---- 4. rebuild -------------------------------------------------------------
-if [ "$REBUILD" = 1 ] && [ "$PSP_DRY_RUN" != 1 ]; then
+if [ "$REBUILD" = 1 ] && [ "$P2S_DRY_RUN" != 1 ]; then
   step "Rebuilding PHP (this takes a while)"
   # Prefer the tree's previous configure options (config.nice) over a minimal
   # --disable-all build, so the rebuild preserves the target installation's

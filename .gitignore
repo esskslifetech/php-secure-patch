@@ -10,11 +10,16 @@ build/
 # ---- output produced by running the toolkit ----------------------------------
 /backups/
 /reports/
+/resources/
 report.json
 *.log
-99-pSP-hardening.ini
+99-p2s-hardening.ini
 *.bak
-*.psp-backup
+*.p2s-backup
+
+# containment artifacts / state written when run as a non-root user
+.protection2shell/
+.p2s-quarantine/
 
 # ---- editor / OS noise -------------------------------------------------------
 .DS_Store

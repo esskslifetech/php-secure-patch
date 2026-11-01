@@ -1,6 +1,6 @@
 # Security policy
 
-`php-secure-patch` is defensive tooling that runs as root and edits system
+`protection2shell` is defensive tooling that runs as root and edits system
 configuration, so bugs in it can be as damaging as the flaws it repairs. Reports
 are taken seriously.
 
@@ -8,17 +8,22 @@ are taken seriously.
 
 * the shell toolkit — `setup.sh`, `rollback.sh`, `install.sh`, `lib/*.sh`,
   `hunt/hunt.sh`, `tests/run-tests.sh`
-* `patches/apply-source-patches.sh` and how it treats the target tree
+* `patches/apply-source-patches.sh`, `patches/apply-brotli-patch.sh` and how
+  they treat the target tree
 * `scanner/project-scanner.php`
-* the templates in `hardening/`
+* the templates in `hardening/` and the containment artifacts in `contain/`
+  (nginx/Apache snippets, IIS PowerShell script, Node preload, Python hook)
+* anything that makes a guard fail **open** — a `br` body that reaches a decoder
+  because the guard silently did nothing is a security bug in the toolkit
 * anything that lets a detected value (a path, a service name, a project name,
   a log line) influence a command, a file write, or a permission change
 
 ## What is not in scope
 
-* the PHP vulnerabilities this toolkit *documents* (CVE-2026-109618,
-  CVE-2026-109619, CVE-2026-115560, CVE-2024-4577, CVE-2019-11043). Those belong
-  with the PHP project, your distribution, or your vendor.
+* the vulnerabilities this toolkit *documents* (CVE-2026-109618,
+  CVE-2026-109619, CVE-2026-115560, CVE-2024-4577, CVE-2019-11043,
+  CVE-2026-111497). Those belong with PHP, Google Brotli, Node.js, or whichever
+  vendor ships the affected copy.
 * findings that require an attacker to already hold root. If root is compromised,
   this tool offers no protection.
 * hardening recommendations you disagree with — open a normal issue instead.
@@ -28,7 +33,7 @@ are taken seriously.
 **Do not open a public issue for a security bug.**
 
 1. Open a private advisory:
-   `https://github.com/esskslifetech/php-secure-patch/security/advisories/new`
+   `https://github.com/esskslifetech/protection2shell/security/advisories/new`
 2. Include: the affected script and line, a reproduction (a fixture directory or
    command sequence is ideal), the impact you believe it has, and a suggested
    fix if you have one.

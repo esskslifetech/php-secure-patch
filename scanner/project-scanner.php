@@ -1,6 +1,6 @@
 <?php
 /**
- * php-secure-patch :: project-scanner.php
+ * protection2shell :: project-scanner.php
  * Deep PHP project/framework detection — complements the bash detection in
  * setup.sh with composer-aware analysis.  Runs on PHP >= 5.6.
  *

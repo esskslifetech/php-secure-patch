@@ -1,25 +1,24 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# php-secure-patch :: rollback.sh
+# protection2shell :: rollback.sh
 # Author: ESS KS Life Tech — MIT licensed, see LICENSE
-# Restore a backup set created by setup.sh --fix (every modified file is
-# recorded in <backup>/MANIFEST.txt), then recycle PHP workers again.
+# Restore a backup set created by setup.sh --fix/--contain (every modified file
+# is recorded in MANIFEST.txt, every created file in CREATED.txt, and every
+# quarantined file in QUARANTINED.txt), then recycle PHP workers again.
 #
 # Usage:
 #   ./rollback.sh               # newest backup set
-#   ./rollback.sh <backup-dir>  # specific set (see /var/backups/php-secure-patch/)
+#   ./rollback.sh <backup-dir>  # specific set (see /var/backups/protection2shell/)
 #   ./rollback.sh --list        # show available sets
 # ==============================================================================
 set -u
-PSP_ROOT="$(cd "$(dirname "$0")" && pwd -P)"
-. "$PSP_ROOT/lib/common.sh"
-. "$PSP_ROOT/lib/detect.sh"
+P2S_ROOT="$(cd "$(dirname "$0")" && pwd -P)"
+. "$P2S_ROOT/lib/common.sh"
+. "$P2S_ROOT/lib/detect.sh"
 
-if [ "$(id -u)" != 0 ]; then
-  base="$HOME/.php-secure-patch/backups"
-else
-  base="/var/backups/php-secure-patch"
-fi
+# New location first; falls back to the php-secure-patch v1.x tree so backup
+# sets taken before the rename stay restorable.
+base="$(p2s_backup_base)"
 
 case "${1:-}" in
   --list)
@@ -38,7 +37,7 @@ case "${1:-}" in
 esac
 
 step "Rolling back: $TARGET"
-PSP_BACKUP_DIR="$TARGET"
+P2S_BACKUP_DIR="$TARGET"
 restore_backups
 
 step "Recycling PHP workers"

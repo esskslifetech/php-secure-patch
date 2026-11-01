@@ -1,0 +1,53 @@
+title: HTTP2Shell Brotli Request-Body Delivery Attempt (CVE-2026-111497)
+id: 9d3c1a44-http2shell-request-2026-111497
+status: test
+description: >
+  Detects delivery of a Brotli-compressed request body, the inbound channel for
+  HTTP2Shell. Two independent signals are combined because either alone is
+  noisy: (a) a request carrying `Content-Encoding: br` against a JSON/API
+  endpoint — real API clients almost never do this; (b) a compressed body of
+  roughly 23 MB (2^24 commands x 11 bits, plus framing) which is the size of the
+  published RCE construction, so a body that large is loud by construction.
+  A 415 response to such a request means the protection2shell/deny-br guard
+  rejected it: the attempt failed, the probing did not.
+references:
+  - https://github.com/advisories/GHSA-9v8h-qqgm-4m35
+  - https://github.com/advisories/GHSA-663w-cv8g-jj2p
+author: protection2shell
+date: 2026-10-31
+tags:
+  - attack.initial-access
+  - attack.t1190
+  - cve.2026-111497
+logsource:
+  category: webserver
+  product: any
+detection:
+  selection_brotli_body:
+    cs-method:
+      - 'POST'
+      - 'PUT'
+      - 'PATCH'
+    cs-request-headers|contains: 'Content-Encoding: br'
+  selection_large_body:
+    cs-method:
+      - 'POST'
+      - 'PUT'
+    sc-bytes: null
+    cs-content-length|gte: 20000000
+  selection_probe_client:
+    cs-user-agent|contains:
+      - 'node2shell-check'
+      - 'brotli2crash'
+      - 'node2shell'
+  condition: selection_brotli_body or selection_large_body or selection_probe_client
+fields:
+  - c-ip
+  - cs-method
+  - cs-uri-stem
+  - cs-content-length
+  - sc-status
+falsepositives:
+  - Legitimate Brotli upload APIs (document them, then exclude those endpoints)
+  - Large binary uploads that are not Brotli-compressed
+level: high

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# php-secure-patch :: lib/report.sh
+# protection2shell :: lib/report.sh
 # Human-readable report + machine-readable JSON report.
 # ==============================================================================
 
-[ -n "${PSP_REPORT_LOADED:-}" ] && return 0
-PSP_REPORT_LOADED=1
+[ -n "${P2S_REPORT_LOADED:-}" ] && return 0
+P2S_REPORT_LOADED=1
 
 cve_color() {
   case "$1" in
@@ -73,6 +73,36 @@ report_human() {
     [ "$fx" != "-" ] && log "      fix: $fx"
   done
 
+  # ---- HTTP2Shell (CVE-2026-111497) ------------------------------------------
+  if [ "${#BROTLI_RECS[@]}" -gt 0 ]; then
+    log ""
+    log "${C_BOLD}Brotli decoder carriers (HTTP2Shell, $BROTLI_CVE):${C_RESET}"
+    local br bst
+    for br in ${BROTLI_RECS[@]+"${BROTLI_RECS[@]}"}; do
+      bst="$(brotli_record_status "$br")"
+      log "  $(cve_color "$bst")$(printf '%-16s' "$bst")${C_RESET} $(printf '%s' "$br" | cut -d'|' -f1) $(printf '%s' "$br" | cut -d'|' -f3)"
+      log "      path: $(printf '%s' "$br" | cut -d'|' -f4)"
+      log "      evidence: $(printf '%s' "$br" | cut -d'|' -f5)"
+      log "      fix: $(brotli_fixed_for "$(printf '%s' "$br" | cut -d'|' -f1)" "$(printf '%s' "$br" | cut -d'|' -f3)")"
+    done
+  fi
+
+  if [ "${#BROTLI_FINDINGS[@]}" -gt 0 ]; then
+    log ""
+    log "${C_BOLD}HTTP2Shell findings:${C_RESET}"
+    local bf
+    for bf in ${BROTLI_FINDINGS[@]+"${BROTLI_FINDINGS[@]}"}; do
+      printf '  [%-8s] %-22s %s\n' \
+        "$(printf '%s' "$bf" | cut -d'|' -f2)" \
+        "$(printf '%s' "$bf" | cut -d'|' -f1)" \
+        "$(printf '%s' "$bf" | cut -d'|' -f4)"
+      log "      target: $(printf '%s' "$bf" | cut -d'|' -f3)"
+      log "      fix:    $(printf '%s' "$bf" | cut -d'|' -f5)"
+    done
+    log ""
+    brotli_status_note | sed 's/^/  /'
+  fi
+
   if [ "${#HARDENING_RECORDS[@]}" -gt 0 ]; then
     log ""
     log "${C_BOLD}Hardening findings:${C_RESET}"
@@ -86,11 +116,11 @@ report_human() {
     done
   fi
 
-  if [ "${#PSP_ACTIONS[@]}" -gt 0 ]; then
+  if [ "${#P2S_ACTIONS[@]}" -gt 0 ]; then
     log ""
     log "${C_BOLD}Actions:${C_RESET}"
     local a
-    for a in ${PSP_ACTIONS[@]+"${PSP_ACTIONS[@]}"}; do log "  * $a"; done
+    for a in ${P2S_ACTIONS[@]+"${P2S_ACTIONS[@]}"}; do log "  * $a"; done
   fi
 }
 
@@ -100,7 +130,7 @@ report_json() { # report_json <outfile>
   {
     printf '{\n'
     printf '  "generated_at": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    printf '  "dry_run": %s,\n' "$([ "$PSP_DRY_RUN" = 1 ] && echo true || echo false)"
+    printf '  "dry_run": %s,\n' "$([ "$P2S_DRY_RUN" = 1 ] && echo true || echo false)"
     printf '  "host": {\n'
     printf '    "os": "%s",\n' "$(json_escape "$OS_PRETTY")"
     printf '    "os_id": "%s",\n' "$(json_escape "$OS_ID")"
@@ -163,6 +193,43 @@ report_json() { # report_json <outfile>
     done
     printf '\n  ],\n'
 
+    printf '  "tool": {"name": "protection2shell", "version": "%s"},\n' "$P2S_TOOL_VERSION"
+
+    printf '  "http2shell": {\n'
+    printf '    "cve": "%s",\n' "$BROTLI_CVE"
+    printf '    "carriers": ['
+    first=1
+    for rec in ${BROTLI_RECS[@]+"${BROTLI_RECS[@]}"}; do
+      [ "$first" = 1 ] || printf ','
+      first=0
+      printf '\n      {"carrier": "%s", "name": "%s", "version": "%s", "path": "%s", "evidence": "%s", "certainty": "%s", "status": "%s"}' \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f1)")" \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f2)")" \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f3)")" \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f4)")" \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f5)")" \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f6)")" \
+        "$(json_escape "$(brotli_record_status "$rec")")"
+    done
+    printf '\n    ],\n'
+    printf '    "findings": ['
+    first=1
+    for rec in ${BROTLI_FINDINGS[@]+"${BROTLI_FINDINGS[@]}"}; do
+      [ "$first" = 1 ] || printf ','
+      first=0
+      printf '\n      {"id": "%s", "severity": "%s", "target": "%s", "message": "%s", "fix": "%s"}' \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f1)")" \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f2)")" \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f3)")" \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f4)")" \
+        "$(json_escape "$(printf '%s' "$rec" | cut -d'|' -f5)")"
+    done
+    printf '\n    ]\n'
+    printf '  },\n'
+
+    printf '  "verification": {"verified": %s, "pending": %s, "unknown": %s},\n' \
+      "${P2S_VERIFIED:-0}" "${P2S_PENDING:-0}" "${P2S_UNKNOWN:-0}"
+
     printf '  "hardening_findings": ['
     first=1
     for rec in ${HARDENING_RECORDS[@]+"${HARDENING_RECORDS[@]}"}; do
@@ -179,7 +246,7 @@ report_json() { # report_json <outfile>
 
     printf '  "actions": ['
     first=1
-    for rec in ${PSP_ACTIONS[@]+"${PSP_ACTIONS[@]}"}; do
+    for rec in ${P2S_ACTIONS[@]+"${P2S_ACTIONS[@]}"}; do
       [ "$first" = 1 ] || printf ','
       first=0
       printf '\n    "%s"' "$(json_escape "$rec")"

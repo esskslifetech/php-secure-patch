@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# php-secure-patch :: lib/cve_db.sh
+# protection2shell :: lib/cve_db.sh
 # Vulnerability knowledge base and verdict engine.
 #
 # Covers:
@@ -16,8 +16,8 @@
 #   HARDENING_RECORDS[]  id|severity|target|message|fix
 # ==============================================================================
 
-[ -n "${PSP_CVE_DB_LOADED:-}" ] && return 0
-PSP_CVE_DB_LOADED=1
+[ -n "${P2S_CVE_DB_LOADED:-}" ] && return 0
+P2S_CVE_DB_LOADED=1
 
 # ---- fixed versions ---------------------------------------------------------
 FIX_PHP2SHELL_85="8.5.12"   # released 2026-10-21
@@ -128,6 +128,8 @@ audit_all() {
   if [ "${#PHP_RECS[@]}" -eq 0 ] && [ "${#FPM_RECS[@]}" -eq 0 ]; then
     _cve_add "CVE-2026-109618" "NOT-FOUND" "no PHP installation detected" "-"
     _cve_add "CVE-2026-109619" "NOT-FOUND" "no PHP installation detected" "-"
+    # HTTP2Shell has nothing to do with PHP: audit it even on a PHP-free host.
+    audit_brotli
     return 0
   fi
 
@@ -141,6 +143,7 @@ audit_all() {
   audit_fpm_hardening
   audit_nginx_cve_2019_11043
   audit_oldest_php
+  audit_brotli
 }
 
 audit_php2shell_one() {
@@ -231,7 +234,7 @@ audit_nginx_cve_2019_11043() {
   [ "${#NGINX_SPLITPATH_CONFS[@]}" -gt 0 ] || return 0
   local f
   for f in ${NGINX_SPLITPATH_CONFS[@]+"${NGINX_SPLITPATH_CONFS[@]}"}; do
-    if grep -qs 'php-secure-patch.*CVE-2019-11043' "$f"; then
+    if grep -qs 'protection2shell.*CVE-2019-11043' "$f"; then
       _hardening_add "H-100" "info" "$f" "nginx fastcgi_split_path_info present (guard already applied)" "-"
     else
       _hardening_add "H-100" "medium" "$f" \
@@ -242,7 +245,7 @@ audit_nginx_cve_2019_11043() {
 }
 
 # true when any detected runtime still sits below its fixed release
-psp_any_vulnerable_php() {
+p2s_any_vulnerable_php() {
   local r
   for r in ${PHP_RECS[@]+"${PHP_RECS[@]}"}; do
     case "$(php2shell_status "$(rec_version "$r")")" in
@@ -256,7 +259,7 @@ psp_any_vulnerable_php() {
 audit_fpm_hardening() {
   [ "${#FPM_POOLS[@]}" -gt 0 ] || return 0
   local p conf user pmmr mem lim hardened vuln=0
-  psp_any_vulnerable_php && vuln=1
+  p2s_any_vulnerable_php && vuln=1
   for p in ${FPM_POOLS[@]+"${FPM_POOLS[@]}"}; do
     conf="$(printf '%s' "$p" | cut -d'|' -f1)"
     pmmr="$(printf '%s' "$p" | cut -d'|' -f5)"

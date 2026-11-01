@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# php-secure-patch :: lib/fix.sh
+# protection2shell :: lib/fix.sh
 # Automatic remediation engine.  Every change is backed up first and recorded
-# in $PSP_BACKUP_DIR/MANIFEST.txt so ./rollback.sh can undo it wholesale.
+# in $P2S_BACKUP_DIR/MANIFEST.txt so ./rollback.sh can undo it wholesale.
 #
 # Actions:
 #   1. upgrade_php_packages   — vendor packages to fixed versions (opt-out: --no-upgrade)
@@ -12,11 +12,13 @@
 #   5. fix_windows_2024_4577  — emit %AD rewrite / PowerShell / htaccess mitigations
 #   6. fix_projects           — per-project .htaccess snippet + composer audit hints
 #   7. apply_source_patches   — optional: patches/ against a php-src tree (--source-dir)
-#   8. restart_workers        — REQUIRED: PHP2Shell lives in long-lived worker state
+#   8. fix_upgrade_brotli     — HTTP2Shell: OS Brotli/curl/.NET carriers
+#   9. fix_brotli_sources     — HTTP2Shell: vendored/source trees (--brotli-src)
+#  10. restart_workers        — REQUIRED: both bugs live in long-lived process state
 # ==============================================================================
 
-[ -n "${PSP_FIX_LOADED:-}" ] && return 0
-PSP_FIX_LOADED=1
+[ -n "${P2S_FIX_LOADED:-}" ] && return 0
+P2S_FIX_LOADED=1
 
 FIX_REPORT=()
 
@@ -28,17 +30,19 @@ _fix_log() {
 # ------------------------------------------------------------------------------
 fix_all() {
   step "Remediation"
-  psp_backup_init
+  p2s_backup_init
 
   local failed=0
 
-  [ "$PSP_NO_UPGRADE" != 1 ] && fix_upgrade_packages || failed=$((failed+1))
+  [ "$P2S_NO_UPGRADE" != 1 ] && fix_upgrade_packages || failed=$((failed+1))
   fix_ini_hardening || failed=$((failed+1))
   fix_fpm_pools || failed=$((failed+1))
   fix_nginx_2019_11043 || failed=$((failed+1))
   fix_windows_2024_4577 || failed=$((failed+1))
   fix_projects || failed=$((failed+1))
-  [ -n "${PSP_SOURCE_DIR:-}" ] && fix_source_patches || failed=$((failed+1))
+  [ -n "${P2S_SOURCE_DIR:-}" ] && fix_source_patches || failed=$((failed+1))
+  fix_upgrade_brotli_packages || failed=$((failed+1))
+  [ -n "${P2S_BROTLI_SRC:-}" ] && fix_brotli_sources || failed=$((failed+1))
   fix_restart_workers || failed=$((failed+1))
 
   if [ "$failed" -gt 0 ]; then
@@ -112,7 +116,7 @@ ini_hardening_content() { # ini_hardening_content <version>
   st="$(php2shell_status "$ver")"
   cat <<'EOF'
 ; ==============================================================================
-; php-secure-patch :: PHP2Shell + general hardening drop-in (auto-generated)
+; protection2shell :: PHP2Shell + general hardening drop-in (auto-generated)
 ; Applied: session.upload_progress producer kill (CVE-2026-109619), request-size
 ; and input-complexity bounds, baseline php.ini hardening.  Memory is handled
 ; according to whether this runtime is patched (see below).
@@ -134,7 +138,7 @@ EOF
 EOF
       ;;
     *)
-      if [ "$PSP_OOM_MITIGATION" = 1 ]; then
+      if [ "$P2S_OOM_MITIGATION" = 1 ]; then
         cat <<'EOF'
 ; --- CVE-2026-109618: interim mitigation — memory_limit = -1 ------------------
 ; The exploit steers a *controlled* OOM during request setup, which needs a
@@ -186,14 +190,14 @@ EOF
     echo "; CVE-2026-109619 confirmed backtrace producer (PHP 8.5 only)"
     echo "fatal_error_backtraces = Off"
   fi
-  if [ "$PSP_STRICT" = 1 ]; then
+  if [ "$P2S_STRICT" = 1 ]; then
     cat <<'EOF'
 display_errors = Off
 zend.assertions = -1
 session.cookie_secure = On
 EOF
   fi
-  if [ "$PSP_LOCKDOWN" = 1 ]; then
+  if [ "$P2S_LOCKDOWN" = 1 ]; then
     cat <<'EOF'
 ; lockdown: shrunken request budgets (review before production use!)
 max_execution_time = 60
@@ -205,28 +209,35 @@ EOF
 
 fix_ini_hardening() {
   step "Applying ini hardening (version-aware drop-ins)"
-  local rec bin ver ini scan target
+  local rec bin ver ini scan target legacy_dir
   for rec in ${PHP_RECS[@]+"${PHP_RECS[@]}"}; do
     bin="$(rec_bin "$rec")"; ver="$(rec_version "$rec")"
     ini="$(rec_ini "$rec")"; scan="$(rec_scandir "$rec")"
 
+    # v1.x wrote 99-pSP-hardening.ini. Leaving it behind would keep stale
+    # directives alongside the new drop-in, so it is backed up and removed
+    # (rollback restores it) before the new file is written.
+    legacy_dir=""
+    [ -n "$ini" ] && legacy_dir="$(dirname "$ini")"
+    cleanup_legacy_ini_dropins "$scan" "$legacy_dir"
+
     if [ -n "$scan" ] && [ -d "$scan" ] && [ -w "$scan" ]; then
-      target="$scan/99-pSP-hardening.ini"
+      target="$scan/99-p2s-hardening.ini"
     elif [ -n "$ini" ] && [ -w "$(dirname "$ini")" ]; then
-      target="$(dirname "$ini")/99-pSP-hardening.ini"
+      target="$(dirname "$ini")/99-p2s-hardening.ini"
     elif [ -n "$ini" ] && [ -f "$ini" ]; then
       # last resort: append a marked block to the main ini
-      if grep -q 'php-secure-patch' "$ini" 2>/dev/null; then
+      if grep -q 'protection2shell' "$ini" 2>/dev/null; then
         info "$ini already hardened — skipping"
         continue
       fi
       backup_file "$ini" >/dev/null
-      if [ "$PSP_DRY_RUN" = 1 ]; then
+      if [ "$P2S_DRY_RUN" = 1 ]; then
         info "[dry] would append hardening block to $ini"
       else
-        { echo ""; echo "; php-secure-patch hardening block — begin"; \
+        { echo ""; echo "; protection2shell hardening block — begin"; \
           ini_hardening_content "$ver"; \
-          echo "; php-secure-patch hardening block — end"; } >> "$ini"
+          echo "; protection2shell hardening block — end"; } >> "$ini"
         ok "appended hardening block to $ini"
       fi
       _fix_log "INI $ini: appended PHP2Shell + hardening block (PHP $ver)"
@@ -242,7 +253,7 @@ fix_ini_hardening() {
     else
       record_created "$target"
     fi
-    if [ "$PSP_DRY_RUN" = 1 ]; then
+    if [ "$P2S_DRY_RUN" = 1 ]; then
       info "[dry] would write $target"
     else
       ini_hardening_content "$ver" > "$target"
@@ -254,7 +265,7 @@ fix_ini_hardening() {
   # The memory half of the CVE-2026-109618 mitigation cannot live in php.ini —
   # state it plainly once, so nobody "improves" it with a tighter limit or with
   # setrlimit.
-  if psp_any_vulnerable_php; then
+  if p2s_any_vulnerable_php; then
     info "CVE-2026-109618 interim memory mitigation:"
     info "  vulnerable runtimes want memory_limit=-1 plus a cap OUTSIDE PHP."
     info "  cap the cgroup/systemd slice, e.g. systemd drop-in for php-fpm:"
@@ -264,7 +275,7 @@ fix_ini_hardening() {
     info "  or a container limit (docker --memory / k8s resources.limits.memory)."
     info "  Do NOT use RLIMIT_AS / RLIMIT_DATA (ulimit -v / -d) — they turn into"
     info "  fatal allocation errors, which is the bailout path being exploited."
-    if [ "$PSP_OOM_MITIGATION" != 1 ]; then
+    if [ "$P2S_OOM_MITIGATION" != 1 ]; then
       info "  Not applied: re-run with --oom-mitigation to write memory_limit=-1."
     fi
     info "  This is containment. Only upgrading PHP closes CVE-2026-109618."
@@ -296,12 +307,12 @@ fix_fpm_pools() {
     hardened="$(printf '%s' "$p" | cut -d'|' -f8)"
 
     if [ "$hardened" = "yes" ]; then
-      if [ "$PSP_LOCKDOWN" = 1 ]; then
+      if [ "$P2S_LOCKDOWN" = 1 ]; then
         # Already hardened by an earlier run — lockdown still needs pm.max_requests=1.
-        # Replace any existing pm.max_requests line (in or outside the psp block).
+        # Replace any existing pm.max_requests line (in or outside the p2s block).
         if [ -w "$conf" ]; then
           backup_file "$conf" >/dev/null
-          if [ "$PSP_DRY_RUN" = 1 ]; then
+          if [ "$P2S_DRY_RUN" = 1 ]; then
             info "[dry] would set pm.max_requests=1 in $conf (lockdown)"
           else
             sed_inplace 's/^pm\.max_requests[[:space:]]*=.*/pm.max_requests = 1/' "$conf"
@@ -314,14 +325,14 @@ fix_fpm_pools() {
         fi
         _fix_log "FPM $conf: lockdown pm.max_requests=1 (already hardened)"
       else
-        info "$conf already contains php-secure-patch block — skipping"
+        info "$conf already contains protection2shell block — skipping"
       fi
       continue
     fi
     [ -f "$conf" ] && [ -w "$conf" ] || { warn "$conf not writable — skipping"; continue; }
     backup_file "$conf" >/dev/null
 
-    if [ "$PSP_DRY_RUN" = 1 ]; then
+    if [ "$P2S_DRY_RUN" = 1 ]; then
       info "[dry] would append hardening block to $conf"
       _fix_log "FPM $conf: pool hardening (dry-run)"
       continue
@@ -329,15 +340,15 @@ fix_fpm_pools() {
 
     {
       echo ""
-      echo "; php-secure-patch hardening — begin (safe to remove)"
+      echo "; protection2shell hardening — begin (safe to remove)"
       echo "; PHP2Shell: mitigations must apply BEFORE request parsing => php_admin_*"
       echo "php_admin_value[session.upload_progress.enabled] = 0"
       echo "php_admin_value[allow_url_include] = 0"
       echo "php_admin_flag[expose_php] = off"
       echo "php_admin_value[phar.readonly] = 1"
       echo "php_admin_value[cgi.fix_pathinfo] = 0"
-      if [ "$mem" = "unset" ] || [ "$PSP_OOM_MITIGATION" = 1 ]; then
-        if [ "$PSP_OOM_MITIGATION" = 1 ]; then
+      if [ "$mem" = "unset" ] || [ "$P2S_OOM_MITIGATION" = 1 ]; then
+        if [ "$P2S_OOM_MITIGATION" = 1 ]; then
           echo "; CVE-2026-109618 interim: keep the ceiling OUTSIDE PHP — cap the"
           echo "; cgroup/systemd slice for this pool (memory.max / MemoryMax=) and size"
           echo "; pm.max_children against it.  Never RLIMIT_AS / RLIMIT_DATA."
@@ -351,8 +362,8 @@ fix_fpm_pools() {
       if [ "$lim" = "unset" ]; then
         echo "security.limit_extensions = .php"
       fi
-      if [ "$pmmr" = "unset" ] || [ "$pmmr" = "0" ] || [ "$PSP_LOCKDOWN" = 1 ]; then
-        if [ "$PSP_LOCKDOWN" = 1 ]; then
+      if [ "$pmmr" = "unset" ] || [ "$pmmr" = "0" ] || [ "$P2S_LOCKDOWN" = 1 ]; then
+        if [ "$P2S_LOCKDOWN" = 1 ]; then
           echo "; lockdown: pm.max_requests=1 — no worker ever serves a second request,"
           echo "; which removes the cross-request reuse CVE-2026-109619 depends on"
           echo "; (it does NOT close the 109618 OOM path — patching still required)."
@@ -365,7 +376,7 @@ fix_fpm_pools() {
         fi
       fi
       echo "request_terminate_timeout = 120s"
-      echo "; php-secure-patch hardening — end"
+      echo "; protection2shell hardening — end"
     } >> "$conf"
     ok "hardened FPM pool $conf"
     _fix_log "FPM $conf: pool hardening applied"
@@ -376,7 +387,7 @@ fix_fpm_pools() {
   for p in ${FPM_RECS[@]+"${FPM_RECS[@]}"}; do
     fbin="$(printf '%s' "$p" | cut -d'|' -f1)"
     if [ -x "$fbin" ]; then
-      if [ "$PSP_DRY_RUN" = 1 ]; then
+      if [ "$P2S_DRY_RUN" = 1 ]; then
         info "[dry] would validate $fbin -t"
       else
         if "$fbin" -t >/dev/null 2>&1; then
@@ -402,13 +413,13 @@ fix_nginx_2019_11043() {
 
   local f
   for f in ${NGINX_SPLITPATH_CONFS[@]+"${NGINX_SPLITPATH_CONFS[@]}"}; do
-    if grep -qs 'php-secure-patch.*CVE-2019-11043' "$f"; then
+    if grep -qs 'protection2shell.*CVE-2019-11043' "$f"; then
       info "$f already guarded"
       continue
     fi
     [ -w "$f" ] || { warn "$f not writable — skipping"; continue; }
     backup_file "$f" >/dev/null
-    if [ "$PSP_DRY_RUN" = 1 ]; then
+    if [ "$P2S_DRY_RUN" = 1 ]; then
       info "[dry] would insert script-file guard into php location blocks in $f"
       _fix_log "NGINX $f: CVE-2019-11043 guard (dry-run)"
       continue
@@ -417,16 +428,16 @@ fix_nginx_2019_11043() {
       /location[^{]*\\\.php/ && !done_file { in_php = 1 }
       in_php && /\{/ && !inserted {
         print
-        print "        # php-secure-patch CVE-2019-11043 guard — begin"
+        print "        # protection2shell CVE-2019-11043 guard — begin"
         print "        # reject requests whose mapped script file does not exist"
         print "        if (!-f $document_root$fastcgi_script_name) { return 404; }"
-        print "        # php-secure-patch CVE-2019-11043 guard — end"
+        print "        # protection2shell CVE-2019-11043 guard — end"
         inserted = 1
         in_php = 0
         next
       }
       { print }
-    ' "$f" > "$f.pspnew" && mv "$f.pspnew" "$f"
+    ' "$f" > "$f.p2snew" && mv "$f.p2snew" "$f"
     if have_cmd nginx && ! nginx -t >/dev/null 2>&1; then
       err "nginx -t failed after editing $f — reverting"
       restore_backups
@@ -441,16 +452,16 @@ fix_nginx_2019_11043() {
 # 5. Windows / php-cgi CVE-2024-4577 mitigations
 # ------------------------------------------------------------------------------
 fix_windows_2024_4577() {
-  local outdir="${PSP_OUT_DIR:-$PSP_ROOT/out}"
+  local outdir="${P2S_OUT_DIR:-$P2S_ROOT/out}"
   mkdir -p "$outdir" 2>/dev/null
 
   # Always emit the mitigation kit (Windows admins often run the scan from WSL)
   local ht="$outdir/CVE-2024-4577.htaccess" ps="$outdir/CVE-2024-4577-mitigate.ps1"
-  if [ "$PSP_DRY_RUN" = 1 ]; then
+  if [ "$P2S_DRY_RUN" = 1 ]; then
     info "[dry] would emit CVE-2024-4577 mitigation kit to $outdir/"
   else
-    cp "$PSP_HARDENING/windows-cve-2024-4577.htaccess" "$ht" 2>/dev/null
-    cp "$PSP_HARDENING/windows-cve-2024-4577.ps1" "$ps" 2>/dev/null
+    cp "$P2S_HARDENING/windows-cve-2024-4577.htaccess" "$ht" 2>/dev/null
+    cp "$P2S_HARDENING/windows-cve-2024-4577.ps1" "$ps" 2>/dev/null
     record_created "$ht" 2>/dev/null || true
     record_created "$ps" 2>/dev/null || true
     ok "CVE-2024-4577 mitigation kit written to $outdir/"
@@ -473,11 +484,11 @@ fix_projects() {
   for p in ${PROJECT_RECS[@]+"${PROJECT_RECS[@]}"}; do
     path="$(printf '%s' "$p" | cut -d'|' -f1)"
     [ -d "$path" ] && [ -w "$path" ] || continue
-    if [ "$PSP_DRY_RUN" = 1 ]; then
+    if [ "$P2S_DRY_RUN" = 1 ]; then
       info "[dry] would drop PHP2Shell hunting notes into $path/"
       continue
     fi
-    cat > "$path/PHP2SHELL-README.txt" <<'EOF'
+    cat > "$path/PROTECTION2SHELL-NOTES.txt" <<'EOF'
 PHP2Shell (CVE-2026-109618 / CVE-2026-109619) — what to check in this project
 ================================================================================
 The fix lives in the PHP runtime, NOT in this application. Updating WordPress/
@@ -505,8 +516,8 @@ Hunting (CISA/NCSC guidance):
 Run `composer audit` (Composer projects) and keep frameworks current, but treat
 the runtime upgrade as the actual fix.
 EOF
-    _fix_log "PROJECT $path: PHP2SHELL-README.txt dropped"
-    record_created "$path/PHP2SHELL-README.txt" 2>/dev/null || true
+    _fix_log "PROJECT $path: PROTECTION2SHELL-NOTES.txt dropped"
+    record_created "$path/PROTECTION2SHELL-NOTES.txt" 2>/dev/null || true
   done
   # composer audit opportunistically (report only)
   if have_cmd composer; then
@@ -523,14 +534,14 @@ EOF
 # 7. source patches (legacy / source builds)
 # ------------------------------------------------------------------------------
 fix_source_patches() {
-  step "Applying bundled source patches to $PSP_SOURCE_DIR"
-  if [ ! -d "$PSP_SOURCE_DIR" ]; then
-    err "--source-dir '$PSP_SOURCE_DIR' does not exist"
+  step "Applying bundled source patches to $P2S_SOURCE_DIR"
+  if [ ! -d "$P2S_SOURCE_DIR" ]; then
+    err "--source-dir '$P2S_SOURCE_DIR' does not exist"
     return 1
   fi
-  run "$PSP_PATCHES/apply-source-patches.sh" "$PSP_SOURCE_DIR"
-  _fix_log "SOURCE patches applied to $PSP_SOURCE_DIR (note: source-tree edits are external to the backup set and cannot be reverted by ./rollback.sh)"
-  warn "source patches were applied to $PSP_SOURCE_DIR — these edits are outside the backup set and are NOT reversible via ./rollback.sh"
+  run "$P2S_PATCHES/apply-source-patches.sh" "$P2S_SOURCE_DIR"
+  _fix_log "SOURCE patches applied to $P2S_SOURCE_DIR (note: source-tree edits are external to the backup set and cannot be reverted by ./rollback.sh)"
+  warn "source patches were applied to $P2S_SOURCE_DIR — these edits are outside the backup set and are NOT reversible via ./rollback.sh"
 }
 
 # ------------------------------------------------------------------------------
@@ -558,4 +569,159 @@ fix_restart_workers() {
   [ "$LITESPEED_PRESENT" = 1 ] && svc_restart "lshttpd"
   [ "$FRANKENPHP_PRESENT" = 1 ] && svc_restart "frankenphp"
   _fix_log "RESTART workers: fpm/apache/nginx/litespeed/frankenphp"
+}
+
+# ------------------------------------------------------------------------------
+# legacy drop-in cleanup (project was named php-secure-patch up to v1.x)
+# ------------------------------------------------------------------------------
+cleanup_legacy_ini_dropins() {
+  local dir legacy
+  for dir in "$@"; do
+    [ -n "$dir" ] && [ -d "$dir" ] || continue
+    for legacy in "$dir/99-pSP-hardening.ini" "$dir/99-psp-hardening.ini"; do
+      [ -f "$legacy" ] || continue
+      info "found legacy hardening drop-in $legacy (from php-secure-patch v1.x)"
+      backup_file "$legacy" >/dev/null 2>&1 || true
+      if [ "$P2S_DRY_RUN" = 1 ]; then
+        info "[dry] would remove legacy drop-in $legacy"
+      else
+        rm -f "$legacy" && ok "removed superseded legacy drop-in $legacy"
+      fi
+      _fix_log "INI remove legacy $legacy (superseded by 99-p2s-hardening.ini)"
+    done
+  done
+}
+
+# ------------------------------------------------------------------------------
+# 8. HTTP2Shell — OS-level Brotli carriers
+# ------------------------------------------------------------------------------
+# Brotli is vendored far more often than it is linked, so this covers only what
+# a package manager actually owns: the distro libbrotli, curl and the .NET
+# runtime. Node/Bun/Python runtimes and vendored trees are handled separately
+# (they are not distro packages, and silently swapping a language runtime under
+# a running application is not a "safe fix").
+fix_upgrade_brotli_packages() {
+  if [ "${#BROTLI_RECS[@]}" -eq 0 ]; then
+    debug "no Brotli carriers — skipping Brotli package upgrade"
+    return 0
+  fi
+  if [ "$P2S_NO_UPGRADE" = 1 ]; then
+    info "skipping Brotli package upgrades (--no-upgrade)"
+    return 0
+  fi
+  step "Upgrading Brotli decoder packages (HTTP2Shell)"
+  if [ "$PKG_MGR" = "none" ]; then
+    warn "no package manager detected — upgrade libbrotli/curl manually"
+    _fix_log "SKIP brotli upgrade: no package manager"
+    return 0
+  fi
+  require_root_for "Brotli package upgrade"
+
+  local pkgs=""
+  case "$PKG_MGR" in
+    apt-get)
+      pkgs="$(dpkg -l 2>/dev/null | awk '/^ii/ && $2 ~ /^(libbrotli|brotli|curl|libcurl)/ {print $2}' | tr '\n' ' ')"
+      if [ -n "$pkgs" ]; then
+        info "upgrading: $pkgs"
+        run env DEBIAN_FRONTEND=noninteractive apt-get update -qq
+        # shellcheck disable=SC2086
+        run env DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade $pkgs
+        _fix_log "UPGRADE apt (brotli/curl): $pkgs"
+      fi ;;
+    dnf|yum)
+      run "$PKG_MGR" -y update brotli brotli-devel curl libcurl
+      _fix_log "UPGRADE $PKG_MGR: brotli curl" ;;
+    apk)
+      run apk upgrade brotli brotli-dev curl
+      _fix_log "UPGRADE apk: brotli curl" ;;
+    pacman)
+      run pacman -Sy --noconfirm brotli curl
+      _fix_log "UPGRADE pacman: brotli curl" ;;
+    zypper)
+      run zypper --non-interactive update libbrotlidec1 brotli curl
+      _fix_log "UPGRADE zypper: brotli curl" ;;
+    brew)
+      run brew upgrade brotli
+      _fix_log "UPGRADE brew: brotli" ;;
+    *)
+      warn "package manager '$PKG_MGR' not automated — upgrade libbrotli manually" ;;
+  esac
+
+  fix_upgrade_python_brotli
+
+  # Node/Bun/.NET are reported with the exact target, never auto-swapped.
+  local r carrier ver
+  for r in ${BROTLI_RECS[@]+"${BROTLI_RECS[@]}"}; do
+    carrier="$(printf '%s' "$r" | cut -d'|' -f1)"
+    ver="$(printf '%s' "$r" | cut -d'|' -f3)"
+    case "$carrier" in
+      node|bun|dotnet|envoy)
+        case "$carrier" in
+          node)   case "$(node_brotli_status "$ver")" in FIXED) continue ;; esac
+                  info "Node $ver: upgrade to $(brotli_fixed_for node "$ver") with your version manager, then rebuild native modules and containers" ;;
+          bun)    case "$(bun_brotli_status "$ver")" in FIXED) continue ;; esac
+                  info "Bun $ver: upgrade to $FIX_BUN, then re-run 'bun build --compile' (the old decoder stays inside existing single-file binaries)" ;;
+          dotnet) case "$(dotnet_brotli_status "$ver")" in FIXED) continue ;; esac
+                  info ".NET $ver: upgrade the runtime to $(brotli_fixed_for dotnet "$ver")" ;;
+          envoy)  case "$(envoy_brotli_status "$ver")" in FIXED) continue ;; esac
+                  info "Envoy/Istio $ver: upgrade to $(brotli_fixed_for envoy "$ver") (or remove the brotli decompressor filter)" ;;
+        esac
+        _fix_log "GUIDE $carrier $ver: manual runtime upgrade required"
+        ;;
+    esac
+  done
+  return 0
+}
+
+# Python wheels: opt-in only. A blanket pip upgrade inside an application's
+# environment can change behaviour, so it needs an explicit flag.
+fix_upgrade_python_brotli() {
+  local r carrier ver py
+  [ "${P2S_UPGRADE_PYTHON:-0}" = 1 ] || return 0
+  for r in ${BROTLI_RECS[@]+"${BROTLI_RECS[@]}"}; do
+    carrier="$(printf '%s' "$r" | cut -d'|' -f1)"
+    case "$carrier" in brotli|brotlicffi) : ;; *) continue ;; esac
+    ver="$(printf '%s' "$r" | cut -d'|' -f3)"
+    case "$(python_brotli_status "$carrier" "$ver")" in
+      FIXED) continue ;;
+    esac
+    py="$(printf '%s' "$r" | cut -d'|' -f4)"
+    [ -x "$py" ] || continue
+    info "upgrading $carrier in $py"
+    run "$py" -m pip install --no-input -U "brotli>=1.2.1" "brotlicffi>=1.2.1.0" \
+      && _fix_log "UPGRADE pip ($py): brotli/brotlicffi" \
+      || warn "pip upgrade failed in $py — upgrade manually and regenerate the lockfile"
+  done
+}
+
+# ------------------------------------------------------------------------------
+# 9. HTTP2Shell — vendored / source trees
+# ------------------------------------------------------------------------------
+fix_brotli_sources() {
+  local dir
+  step "Patching Brotli source trees (HTTP2Shell)"
+  for dir in $P2S_BROTLI_SRC; do
+    if [ ! -d "$dir" ]; then
+      err "--brotli-src '$dir' does not exist"
+      return 1
+    fi
+    if [ -f "$dir/c/common/version.h" ]; then
+      if [ "$P2S_DRY_RUN" = 1 ]; then
+        run "$P2S_PATCHES/apply-brotli-patch.sh" "$dir" --dry-run
+      else
+        run "$P2S_PATCHES/apply-brotli-patch.sh" "$dir" --verify
+      fi
+    else
+      if [ "$P2S_DRY_RUN" = 1 ]; then
+        run "$P2S_PATCHES/apply-brotli-patch.sh" --find-under "$dir" --dry-run
+      else
+        run "$P2S_PATCHES/apply-brotli-patch.sh" --find-under "$dir" --verify
+      fi
+    fi
+    _fix_log "SOURCE brotli patched under $dir (outside the backup set — not reversible via rollback.sh)"
+  done
+  warn "source patches are NOT reversible via rollback.sh; rebuild and redeploy afterwards"
+  warn "a rebuilt binary is not a deployed fix: containers must be REBUILT (not"
+  warn "restarted from a cached layer) and every process restarted."
+  return 0
 }

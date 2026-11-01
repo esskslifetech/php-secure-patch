@@ -1,9 +1,14 @@
 # PHP2Shell — technical research & response (2026-10-31)
 
+> Part of **PROTECTION2Shell**. The companion dossier for the Brotli decoder
+> bug the same toolkit covers is [docs/HTTP2SHELL.md](docs/HTTP2SHELL.md).
+
 Deep-dive on the October 2026 PHP critical RCE event and the two legacy PHP
 CVEs this toolkit addresses. Everything below is grounded in public advisories
-(references at the bottom); the fix mapping shows how `php-secure-patch`
-responds to each item.
+(references at the bottom); the fix mapping shows how `protection2shell`
+responds to each item — detection in `lib/detect.sh`, verdicts in
+`lib/cve_db.sh`, remediation in `lib/fix.sh`, containment in `lib/contain.sh`,
+and verified patches in `patches/`.
 
 ---
 

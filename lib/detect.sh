@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# php-secure-patch :: lib/detect.sh
+# protection2shell :: lib/detect.sh
 # Detects: operating system, package manager, every PHP installation + version
 # + SAPI + ini state, PHP-FPM pools, web servers (nginx/Apache/LiteSpeed/
 # FrankenPHP/php-cgi) and PHP projects on disk (WordPress, Joomla, Drupal,
@@ -17,8 +17,8 @@
 #   PROJECT_RECS[] path|type|version|php_constraint|extra
 # ==============================================================================
 
-[ -n "${PSP_DETECT_LOADED:-}" ] && return 0
-PSP_DETECT_LOADED=1
+[ -n "${P2S_DETECT_LOADED:-}" ] && return 0
+P2S_DETECT_LOADED=1
 
 OS_ID=""; OS_VERSION_ID=""; OS_FAMILY=""; OS_PRETTY=""; OS_KERNEL=""; PKG_MGR=""; IS_WINDOWS=0
 PHP_RECS=()
@@ -89,7 +89,7 @@ detect_os() {
 # ------------------------------------------------------------------------------
 # PHP installations
 # ------------------------------------------------------------------------------
-_PSP_PROBE_PHP='
+_P2S_PROBE_PHP='
 $keys = array("disable_functions","memory_limit","allow_url_include","allow_url_fopen",
   "cgi.fix_pathinfo","expose_php","phar.readonly","session.upload_progress.enabled",
   "session.cookie_httponly","session.cookie_secure","session.cookie_samesite",
@@ -147,7 +147,7 @@ probe_php_bin() { # -> prints one PHP_RECS line (or nothing)
   [ "$ini" = "(none)" ] && ini=""
   scan="$("$bin" --ini 2>/dev/null | awk -F': *' '/Scan for additional .ini files/{print $2; exit}')"
   [ "$scan" = "(none)" ] && scan=""
-  settings="$("$bin" -r "$_PSP_PROBE_PHP" 2>/dev/null | tr '\n' ';')"
+  settings="$("$bin" -r "$_P2S_PROBE_PHP" 2>/dev/null | tr '\n' ';')"
   printf '%s|%s|%s|%s|%s|%s\n' "$bin" "$version" "$sapi" "$ini" "$scan" "$settings"
 }
 
@@ -290,7 +290,7 @@ fpm_pool_record() {
   pmmr="$(awk -F= '/^[[:space:]]*pm\.max_requests[[:space:]]*=/{gsub(/[ \t]/,"",$2);print $2;exit}' "$conf")"
   mem="$(awk -F= '/php_(admin_)?value\[memory_limit\]/{gsub(/[ \t\]]/,"",$2);print $2;exit}' "$conf")"
   lim="$(awk -F= '/^[[:space:]]*security\.limit_extensions[[:space:]]*=/{gsub(/^[ \t]+|[ \t]+$/,"",$2);print $2;exit}' "$conf")"
-  grep -q 'php-secure-patch' "$conf" 2>/dev/null && hardened="yes"
+  grep -q 'protection2shell' "$conf" 2>/dev/null && hardened="yes"
   printf '%s|%s|%s|%s|%s|%s|%s|%s\n' "$conf" "${user:-?}" "${group:-?}" "${listen:-?}" \
     "${pmmr:-unset}" "${mem:-unset}" "${lim:-unset}" "$hardened"
 }
