@@ -25,11 +25,23 @@
 #   ./hunt/hunt.sh --webroot /var/www --days 14
 #   ./hunt/hunt.sh --fail-on-findings       # exit 1 when anything is found
 # ==============================================================================
+# --- end of help ---
+# Re-exec under bash when invoked as `sh setup.sh` (dash on Debian/Ubuntu, BSD
+# sh on macOS, some CI runners): the scripts use bash arrays and [[ ]], and a
+# silent syntax error is the most common "it will not install" report.
+if [ -z "${BASH_VERSION:-}" ]; then
+  command -v bash >/dev/null 2>&1 || {
+    echo "protection2shell needs bash — install it (apt install bash / brew install bash) and retry" >&2
+    exit 1
+  }
+  exec bash "$0" "$@"
+fi
+
 set -u
 P2S_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 . "$P2S_ROOT/lib/common.sh"
 
-usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
+usage() { awk 'NR == 1 { next } /^# ?--- end of help ---/ { exit } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
 LOGS=(); ERRLOGS=(); APPLOGS=(); WEBROOTS=(); DAYS=14; MAX_BYTES=1048576; FAIL_ON=0
 

@@ -6,6 +6,17 @@
 # end-to-end audit + fix dry-run, patch integrity.  No root needed.
 #   ./tests/run-tests.sh
 # ==============================================================================
+# Re-exec under bash when invoked as `sh setup.sh` (dash on Debian/Ubuntu, BSD
+# sh on macOS, some CI runners): the scripts use bash arrays and [[ ]], and a
+# silent syntax error is the most common "it will not install" report.
+if [ -z "${BASH_VERSION:-}" ]; then
+  command -v bash >/dev/null 2>&1 || {
+    echo "protection2shell needs bash — install it (apt install bash / brew install bash) and retry" >&2
+    exit 1
+  }
+  exec bash "$0" "$@"
+fi
+
 set -u
 P2S_ROOT="$(cd "$(dirname "$0")/.." && pwd -P)"
 . "$P2S_ROOT/lib/common.sh"
@@ -443,6 +454,40 @@ assert_contains "setup --help documents --auto" "--auto" "$("$P2S_ROOT/setup.sh"
 assert_contains "setup --help documents --contain" "--contain" "$("$P2S_ROOT/setup.sh" --help 2>&1)"
 assert_contains "install --help uses the new name" "protection2shell" "$("$P2S_ROOT/install.sh" --help 2>&1)"
 assert_eq "tool version is 2.x" 2 "$(printf '%s' "$P2S_TOOL_VERSION" | cut -d. -f1)"
+
+step "25. install ergonomics (the \"it will not install\" cases)"
+# `sh setup.sh` was a syntax error before 2.0.1; the scripts re-exec under bash.
+assert_rc "sh setup.sh --help exits 0" 0 "$(sh "$P2S_ROOT/setup.sh" --help >/dev/null 2>&1; echo $?)"
+assert_contains "sh setup.sh produces help, not a syntax error" "protection2shell" \
+  "$(sh "$P2S_ROOT/setup.sh" --help 2>&1)"
+assert_rc "sh install.sh --help exits 0" 0 "$(sh "$P2S_ROOT/install.sh" --help >/dev/null 2>&1; echo $?)"
+assert_contains "install --help documents --bin" "--bin" "$("$P2S_ROOT/install.sh" --help 2>&1)"
+assert_contains "setup.sh carries the bash re-exec guard" "BASH_VERSION" "$(cat "$P2S_ROOT/setup.sh")"
+
+# a user-level install needs no root and no /usr/local/bin
+PREFIX_DIR="$TMP/user-install/opt"
+BIN_DIR="$TMP/user-install/bin"
+out="$("$P2S_ROOT/install.sh" --prefix "$PREFIX_DIR" --bin "$BIN_DIR" 2>&1)"
+assert_rc "install.sh --prefix/--bin exits 0" 0 "$?"
+assert_contains "install.sh reports the destination" "$PREFIX_DIR/protection2shell" "$out"
+assert_eq "wrapper installed" 1 "$([ -x "$BIN_DIR/protection2shell" ] && echo 1 || echo 0)"
+assert_eq "payload installed" 1 "$([ -f "$PREFIX_DIR/protection2shell/setup.sh" ] && echo 1 || echo 0)"
+assert_eq "docs installed with the payload" 1 "$([ -f "$PREFIX_DIR/protection2shell/INSTALL.md" ] && echo 1 || echo 0)"
+# the wrapper must not depend on the exec bit of the payload (zip extractions)
+chmod -x "$PREFIX_DIR/protection2shell/setup.sh"
+assert_rc "wrapper runs a non-executable payload" 0 "$("$BIN_DIR/protection2shell" --help >/dev/null 2>&1; echo $?)"
+assert_contains "wrapper survives a lost exec bit" "exec bash" "$(cat "$BIN_DIR/protection2shell")"
+
+if [ "$(id -u)" != 0 ]; then
+  out="$("$P2S_ROOT/install.sh" --prefix "$TMP/timer-opt" --bin "$TMP/timer-bin" --timer 2>&1)"
+  assert_rc "--timer without root fails" 1 "$?"
+  assert_contains "--timer failure names sudo" "sudo" "$out"
+fi
+
+assert_eq "INSTALL.md shipped" 1 "$([ -f "$P2S_ROOT/INSTALL.md" ] && echo 1 || echo 0)"
+assert_contains "INSTALL.md tells people to run bash setup.sh" "bash setup.sh" "$(cat "$P2S_ROOT/INSTALL.md")"
+assert_contains "INSTALL.md maps the exec-bit failure" "Permission denied" "$(cat "$P2S_ROOT/INSTALL.md")"
+assert_contains "README points at INSTALL.md" "INSTALL.md" "$(cat "$P2S_ROOT/README.md")"
 
 step "Results"
 log "passed: $PASS   failed: $FAIL"

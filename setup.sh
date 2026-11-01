@@ -40,6 +40,18 @@
 #
 #  Exit codes: 0 = ok / 2 = vulnerable state remains / 1 = error
 # ==============================================================================
+# --- end of help ---
+# Re-exec under bash when invoked as `sh setup.sh` (dash on Debian/Ubuntu, BSD
+# sh on macOS, some CI runners): the scripts use bash arrays and [[ ]], and a
+# silent syntax error is the most common "it will not install" report.
+if [ -z "${BASH_VERSION:-}" ]; then
+  command -v bash >/dev/null 2>&1 || {
+    echo "protection2shell needs bash — install it (apt install bash / brew install bash) and retry" >&2
+    exit 1
+  }
+  exec bash "$0" "$@"
+fi
+
 set -u
 
 P2S_ROOT="$(cd "$(dirname "$0")" && pwd -P)"
@@ -57,7 +69,7 @@ export P2S_ROOT
 
 # print the header comment block only: stops at the closing rule, so shell
 # lines and directives below it never reach --help output
-usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
+usage() { awk 'NR == 1 { next } /^# ?--- end of help ---/ { exit } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
 SCAN_PATHS=""
 JSON_OUT=""

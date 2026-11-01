@@ -93,10 +93,21 @@ cd protection2shell
 ```
 
 Nothing to compile, nothing to install, no package manager: plain bash plus
-coreutils/awk/sed/grep. If you fetched a source archive instead of cloning, mark
-the entry points executable first (`chmod +x setup.sh rollback.sh install.sh
-hunt/hunt.sh tests/run-tests.sh patches/apply-source-patches.sh
-patches/apply-brotli-patch.sh`); a git checkout carries the mode bits.
+coreutils/awk/sed/grep.
+
+From a zip or a source archive, run `bash setup.sh` instead of `./setup.sh`:
+Windows Explorer, Finder and most GUI zip tools drop the executable bit, and
+`bash <script>` does not need it. Nothing else changes. **Installation
+troubleshooting — exec bits, `sh` vs `bash`, missing `sudo`, Alpine, Windows,
+WSL, exit code 2 — is in [INSTALL.md](INSTALL.md).**
+
+Install on `PATH` in one step, root or not:
+
+```sh
+sudo ./install.sh                                              # /opt + /usr/local/bin + optional --timer
+./install.sh --prefix "$HOME/.local/share/protection2shell" \
+             --bin "$HOME/.local/bin"                          # no root required
+```
 
 ---
 

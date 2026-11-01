@@ -14,6 +14,18 @@
 #   --rebuild   after patching: ./buildconf --force && ./configure && make -j
 #   --force     apply even if the tree already contains fixed versions
 # ==============================================================================
+# --- end of help ---
+# Re-exec under bash when invoked as `sh setup.sh` (dash on Debian/Ubuntu, BSD
+# sh on macOS, some CI runners): the scripts use bash arrays and [[ ]], and a
+# silent syntax error is the most common "it will not install" report.
+if [ -z "${BASH_VERSION:-}" ]; then
+  command -v bash >/dev/null 2>&1 || {
+    echo "protection2shell needs bash — install it (apt install bash / brew install bash) and retry" >&2
+    exit 1
+  }
+  exec bash "$0" "$@"
+fi
+
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -21,7 +33,7 @@ P2S_ROOT="$(cd "$HERE/.." && pwd -P)"
 . "$P2S_ROOT/lib/common.sh"
 . "$P2S_ROOT/lib/cve_db.sh"
 
-usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
+usage() { awk 'NR == 1 { next } /^# ?--- end of help ---/ { exit } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
 SRC="${1:-}"; shift || true
 [ -n "$SRC" ] && [ -d "$SRC" ] || die "usage: $0 /path/to/php-src [--dry-run] [--rebuild] [--force]"

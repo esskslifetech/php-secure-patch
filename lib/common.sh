@@ -29,7 +29,7 @@ P2S_QUARANTINE_DAYS="${P2S_QUARANTINE_DAYS:-30}"
 P2S_FORCE_CONTAIN="${P2S_FORCE_CONTAIN:-0}"  # 1 = contain even if no carrier looks vulnerable
 P2S_VERIFY="${P2S_VERIFY:-0}"
 P2S_BACKUP_DIR="${P2S_BACKUP_DIR:-}"
-P2S_TOOL_VERSION="2.0.0"            # protection2shell release (renamed from php-secure-patch 1.x)
+P2S_TOOL_VERSION="2.0.1"            # protection2shell release (renamed from php-secure-patch 1.x)
 P2S_ACTIONS=()                      # log of actions performed/planned
 
 # ---- colours ----------------------------------------------------------------
@@ -250,9 +250,16 @@ sed_inplace() { # sed_inplace <expr> <file>
 }
 
 require_root_for() {
-  if [ "$(id -u)" != 0 ] && [ "$P2S_DRY_RUN" != 1 ]; then
-    die "action '$1' needs root. Re-run with sudo, or use --dry-run to preview."
+  [ "$(id -u)" = 0 ] && return 0
+  [ "$P2S_DRY_RUN" = 1 ] && return 0
+  if ! have_cmd sudo; then
+    die "action '$1' needs root and this host has no sudo.
+       Read-only audit and reporting work without it:  ./setup.sh
+       Preview the change without applying it:          ./setup.sh --contain --dry-run
+       On Windows, run the audit in Git-Bash and apply the IIS guard with
+       contain/windows-iis-http2shell.ps1 from an elevated PowerShell."
   fi
+  die "action '$1' needs root. Re-run with sudo, or use --dry-run to preview."
 }
 
 # ---- service management -----------------------------------------------------

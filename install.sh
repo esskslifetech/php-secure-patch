@@ -7,17 +7,31 @@
 # is re-asserted instead of applied once and forgotten.
 # Pure file copies + wrappers — nothing is compiled, nothing else is touched.
 #
-#   sudo ./install.sh                 # install to /opt/protection2shell
+#   sudo ./install.sh                 # install to /opt/protection2shell, wrappers in /usr/local/bin
 #   sudo ./install.sh --prefix /usr/local
+#   ./install.sh --prefix ~/.local/share/protection2shell --bin ~/.local/bin
+#                                     # no root needed: user-level install
 #   sudo ./install.sh --timer         # + daily containment re-assertion (systemd)
 #   sudo ./install.sh --timer auto    # + daily contain+fix+verify (unattended)
 #   sudo ./install.sh --uninstall     # remove wrappers, timer, cron entry
 # ==============================================================================
+# --- end of help ---
+# Re-exec under bash when invoked as `sh setup.sh` (dash on Debian/Ubuntu, BSD
+# sh on macOS, some CI runners): the scripts use bash arrays and [[ ]], and a
+# silent syntax error is the most common "it will not install" report.
+if [ -z "${BASH_VERSION:-}" ]; then
+  command -v bash >/dev/null 2>&1 || {
+    echo "protection2shell needs bash — install it (apt install bash / brew install bash) and retry" >&2
+    exit 1
+  }
+  exec bash "$0" "$@"
+fi
+
 set -u
 P2S_ROOT="$(cd "$(dirname "$0")" && pwd -P)"
 . "$P2S_ROOT/lib/common.sh"
 
-usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
+usage() { awk 'NR == 1 { next } /^# ?--- end of help ---/ { exit } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
 PREFIX="/opt"
 UNINSTALL=0
@@ -26,6 +40,7 @@ TIMER_MODE="contain"
 while [ $# -gt 0 ]; do
   case "$1" in
     --prefix)    shift; PREFIX="${1:-/opt}" ;;
+    --bin)       shift; BIN="${1:-}" ; [ -n "$BIN" ] || die "--bin needs a directory" ;;
     --uninstall) UNINSTALL=1 ;;
     --timer)
       TIMER=1
@@ -40,7 +55,7 @@ while [ $# -gt 0 ]; do
 done
 
 DEST="$PREFIX/protection2shell"
-BIN=/usr/local/bin
+BIN="${BIN:-/usr/local/bin}"
 UNIT_DIR=/etc/systemd/system
 CRON_FILE=/etc/cron.d/protection2shell
 LOG_DIR=/var/log/protection2shell
@@ -74,7 +89,23 @@ if [ "$UNINSTALL" = 1 ]; then
   exit 0
 fi
 
-[ "$(id -u)" = 0 ] || die "run as root (installs into $PREFIX and $BIN)"
+# Root is not required when both targets are writable by this user. The old
+# check demanded root unconditionally, so a user install died with one line and
+# no way forward — the most common "it will not install" case.
+if [ "$(id -u)" != 0 ]; then
+  if ! mkdir -p "$DEST" 2>/dev/null || ! mkdir -p "$BIN" 2>/dev/null; then
+    die "cannot write $DEST or $BIN as $(id -un).
+       Either run it with sudo:
+         sudo ./install.sh --prefix $PREFIX --bin $BIN
+       or install just for this user (no root):
+         ./install.sh --prefix \"\$HOME/.local/share/protection2shell\" --bin \"\$HOME/.local/bin\""
+  fi
+fi
+
+if [ "$TIMER" = 1 ] && [ "$(id -u)" != 0 ]; then
+  die "--timer writes /etc/systemd/system and /etc/cron.d, so it needs sudo:
+       sudo ./install.sh --prefix $PREFIX --bin $BIN --timer"
+fi
 
 step "Installing to $DEST"
 mkdir -p "$DEST"
@@ -82,22 +113,30 @@ cp -R "$P2S_ROOT/lib" "$P2S_ROOT/patches" "$P2S_ROOT/hardening" \
       "$P2S_ROOT/contain" "$P2S_ROOT/scanner" "$P2S_ROOT/hunt" "$P2S_ROOT/tests" "$DEST/"
 cp "$P2S_ROOT/setup.sh" "$P2S_ROOT/rollback.sh" "$P2S_ROOT/install.sh" \
    "$P2S_ROOT/README.md" "$P2S_ROOT/SECURITY-RESEARCH.md" "$DEST/"
-[ -f "$P2S_ROOT/LICENSE" ] && cp "$P2S_ROOT/LICENSE" "$DEST/"
+for extra in LICENSE CHANGELOG.md INSTALL.md SECURITY.md CONTRIBUTING.md; do
+  [ -f "$P2S_ROOT/$extra" ] && cp "$P2S_ROOT/$extra" "$DEST/"
+done
+if [ -d "$P2S_ROOT/docs" ]; then
+  mkdir -p "$DEST/docs" && cp -R "$P2S_ROOT/docs/." "$DEST/docs/"
+fi
 chmod +x "$DEST/setup.sh" "$DEST/rollback.sh" \
          "$DEST/patches/apply-source-patches.sh" "$DEST/patches/apply-brotli-patch.sh" \
          "$DEST/tests/run-tests.sh" "$DEST/hunt/hunt.sh"
 
+# `exec bash <script>` instead of executing the file directly: an archive
+# extracted on Windows or copied through a zip loses the exec bit, and the
+# wrapper would then fail with "Permission denied" for every command.
 cat > "$BIN/protection2shell" <<EOF
 #!/bin/sh
-exec "$DEST/setup.sh" "\$@"
+exec bash "$DEST/setup.sh" "\$@"
 EOF
 cat > "$BIN/protection2shell-rollback" <<EOF
 #!/bin/sh
-exec "$DEST/rollback.sh" "\$@"
+exec bash "$DEST/rollback.sh" "\$@"
 EOF
 cat > "$BIN/protection2shell-hunt" <<EOF
 #!/bin/sh
-exec "$DEST/hunt/hunt.sh" "\$@"
+exec bash "$DEST/hunt/hunt.sh" "\$@"
 EOF
 chmod +x "$BIN/protection2shell" "$BIN/protection2shell-rollback" "$BIN/protection2shell-hunt"
 
@@ -179,6 +218,10 @@ EOF
 [ "$TIMER" = 1 ] && { schedule_timer || true; }
 
 ok "installed. Try:"
+case ":$PATH:" in
+  *":$BIN:"*) ;;
+  *) warn "$BIN is not in your PATH — add it:  export PATH=\"\$PATH:$BIN\"" ;;
+esac
 info "  protection2shell                 # audit this host (read-only)"
 info "  protection2shell --contain       # cut the exploit channel now"
 info "  protection2shell --auto          # contain + fix + verify, unattended"

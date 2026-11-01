@@ -23,6 +23,18 @@
 #
 # Exit codes: 0 = patched (or nothing to do) / 1 = failure
 # ==============================================================================
+# --- end of help ---
+# Re-exec under bash when invoked as `sh setup.sh` (dash on Debian/Ubuntu, BSD
+# sh on macOS, some CI runners): the scripts use bash arrays and [[ ]], and a
+# silent syntax error is the most common "it will not install" report.
+if [ -z "${BASH_VERSION:-}" ]; then
+  command -v bash >/dev/null 2>&1 || {
+    echo "protection2shell needs bash — install it (apt install bash / brew install bash) and retry" >&2
+    exit 1
+  }
+  exec bash "$0" "$@"
+fi
+
 set -u
 
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -36,7 +48,7 @@ TARGETS=""
 FIND_UNDER=""
 DRY=0; FUZZ=0; VERIFY=0; BUILD=0; REVERT=0; FORCE=0
 
-usage() { awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
+usage() { awk 'NR == 1 { next } /^# ?--- end of help ---/ { exit } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
